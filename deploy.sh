@@ -15,7 +15,7 @@ set -euo pipefail
 source "$(dirname "$0")/mailu.env"
 
 # --- Docker Network and Volume Setup ---
-NETWORK="mailu-network"
+NETWORK="traefik-proxy"
 DB_VOLUME="mailu_db_data"
 DATA_VOLUME="mailu_data"
 
