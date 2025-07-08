@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Final Variablized Version)
+# Mailu Deployment Script (Final Corrected Version)
 # ======================================================================
 # Deploys Mailu and its Redis dependency using variables for container names.
 # This version includes all necessary fixes for a stable deployment.
@@ -41,7 +41,7 @@ MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 # --- Create Docker Network and User-Owned Directories ---
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
 docker network create "$MAILU_NETWORK" 2>/dev/null || true
-mkdir -p "$MAILU_DATA_PATH"/{certs,data,dkim,mail,overrides/postfix,overrides/dovecot,webmail}
+mkdir -p "$MAILU_DATA_PATH"/{certs,data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
 
 # --- Service Deployment ---
 
@@ -141,6 +141,7 @@ docker run -d \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --env-file="$ENV_FILE" \
+  -v "$MAILU_DATA_PATH/mailqueue":/queue \
   -v "$MAILU_DATA_PATH/overrides/postfix":/overrides:ro \
   "$DOCKER_ORG/postfix:$MAILU_VERSION"
 
