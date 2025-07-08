@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (docker run methodology)
+# Mailu Deployment Script (Corrected - No Sudo Required)
 # ======================================================================
-# Deploys each Mailu service as a separate container without docker-compose.
+# Deploys Mailu using a user-owned data directory to avoid root permissions.
 # Adopts the same environment file loading as the Traefik deploy script.
 
 # --- Setup and Pre-flight Checks ---
@@ -26,10 +26,13 @@ set -o allexport
 source "$ENV_FILE"
 set +o allexport
 
-# --- Create Docker Network and Directories ---
-echo "Setting up network and directories..."
+# --- Define the data directory inside the project folder ---
+MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
+
+# --- Create Docker Network and User-Owned Directories ---
+echo "Setting up network and directories in $MAILU_DATA_PATH..."
 docker network create "$MAILU_NETWORK" 2>/dev/null || true
-mkdir -p /mailu/{certs,data,dkim,mail,overrides/postfix,overrides/dovecot,webmail}
+mkdir -p "$MAILU_DATA_PATH"/{certs,data,dkim,mail,overrides/postfix,overrides/dovecot,webmail}
 
 # --- Service Deployment ---
 
@@ -65,8 +68,8 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
-  -v /mailu/certs:/certs \
-  -v /mailu/overrides/nginx:/overrides:ro \
+  -v "$MAILU_DATA_PATH/certs":/certs \
+  -v "$MAILU_DATA_PATH/overrides/nginx":/overrides:ro \
   -l "traefik.enable=true" \
   -l "traefik.docker.network=$TRAEFIK_NETWORK" \
   -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
@@ -99,9 +102,39 @@ docker run -d \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --env-file="$ENV_FILE" \
-  -v /mailu/data:/data \
-  -v /mailu/dkim:/dkim \
+  -v "$MAILU_DATA_PATH/data":/data \
+  -v "$MAILU_DATA_PATH/dkim":/dkim \
   "$DOCKER_ORG/admin:$MAILU_VERSION"
 
 # IMAP Container
-docker run -
+docker run -d \
+  --name "$IMAP_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --env-file="$ENV_FILE" \
+  -v "$MAILU_DATA_PATH/mail":/mail \
+  -v "$MAILU_DATA_PATH/overrides/dovecot":/overrides:ro \
+  "$DOCKER_ORG/dovecot:$MAILU_VERSION"
+
+# SMTP Container
+docker run -d \
+  --name "$SMTP_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --env-file="$ENV_FILE" \
+  -v "$MAILU_DATA_PATH/overrides/postfix":/overrides:ro \
+  "$DOCKER_ORG/postfix:$MAILU_VERSION"
+
+# Webmail Container
+docker run -d \
+  --name "$WEBMAIL_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --env-file="$ENV_FILE" \
+  -v "$MAILU_DATA_PATH/webmail":/data \
+  "$DOCKER_ORG/roundcube:$MAILU_VERSION"
+
+echo
+echo "✔️ Mailu deployment is complete!"
+echo "   All services started using individual 'docker run' commands."
+echo "   Access via https://${HOSTNAMES%%,*}"
