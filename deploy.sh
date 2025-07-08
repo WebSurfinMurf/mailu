@@ -11,10 +11,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ENV_FILE="mailu.env" # Assumes mailu.env is in the same directory
+# Path to the environment file, matching the Traefik deploy script's structure.
+ENV_FILE="../secrets/mailu.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Error: Environment file not found at $SCRIPT_DIR/$ENV_FILE"
+  echo "Error: Environment file not found at $ENV_FILE"
+  echo "Please ensure your mailu.env file is located in the '../secrets' directory."
   exit 1
 fi
 
@@ -102,34 +104,4 @@ docker run -d \
   "$DOCKER_ORG/admin:$MAILU_VERSION"
 
 # IMAP Container
-docker run -d \
-  --name "$IMAP_CONTAINER" \
-  --restart=always \
-  --network="$MAILU_NETWORK" \
-  --env-file="$ENV_FILE" \
-  -v /mailu/mail:/mail \
-  -v /mailu/overrides/dovecot:/overrides:ro \
-  "$DOCKER_ORG/dovecot:$MAILU_VERSION"
-
-# SMTP Container
-docker run -d \
-  --name "$SMTP_CONTAINER" \
-  --restart=always \
-  --network="$MAILU_NETWORK" \
-  --env-file="$ENV_FILE" \
-  -v /mailu/overrides/postfix:/overrides:ro \
-  "$DOCKER_ORG/postfix:$MAILU_VERSION"
-
-# Webmail Container
-docker run -d \
-  --name "$WEBMAIL_CONTAINER" \
-  --restart=always \
-  --network="$MAILU_NETWORK" \
-  --env-file="$ENV_FILE" \
-  -v /mailu/webmail:/data \
-  "$DOCKER_ORG/roundcube:$MAILU_VERSION"
-
-echo
-echo "✔️ Mailu deployment is complete!"
-echo "   All services started using individual 'docker run' commands."
-echo "   Access via https://$HOSTNAMES"
+docker run -
