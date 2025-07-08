@@ -56,7 +56,8 @@ docker pull "$DOCKER_ORG/nginx:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/admin:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/dovecot:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/postfix:$MAILU_VERSION"
-docker pull "$DOCKER_ORG/roundcube:$MAILU_VERSION"
+# --- CORRECTED: Pull the unified webmail image ---
+docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
 
 
 echo "Deploying Mailu containers..."
@@ -132,7 +133,7 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/webmail":/data \
-  "$DOCKER_ORG/roundcube:$MAILU_VERSION"
+  "$DOCKER_ORG/webmail:$MAILU_VERSION" # --- CORRECTED: Use the unified webmail image ---
 
 echo
 echo "✔️ Mailu deployment is complete!"
