@@ -1,43 +1,135 @@
 #!/usr/bin/env bash
+
+# ======================================================================
+# Mailu Deployment Script (docker run methodology)
+# ======================================================================
+# Deploys each Mailu service as a separate container without docker-compose.
+# Adopts the same environment file loading as the Traefik deploy script.
+
+# --- Setup and Pre-flight Checks ---
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-# ==============================================================================
-# Mailu Deployment Script
-# ==============================================================================
-#
-# Description:
-#   Deploys Mailu with all necessary components, including networking
-#   and volumes.
-#
-# ==============================================================================
+ENV_FILE="mailu.env" # Assumes mailu.env is in the same directory
 
-# --- Load Environment Variables ---
-source "$(dirname "$0")/../secrets/mailu.env"
-
-# --- Docker Network and Volume Setup ---
-NETWORK="traefik-proxy"
-DB_VOLUME="mailu_db_data"
-DATA_VOLUME="mailu_data"
-
-# Ensure the Docker network exists
-if ! docker network ls --format '{{.Name}}' | grep -qx "${NETWORK}"; then
-  echo "Creating Docker network: ${NETWORK}..."
-  docker network create "${NETWORK}"
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Error: Environment file not found at $SCRIPT_DIR/$ENV_FILE"
+  exit 1
 fi
 
-# Ensure Docker volumes exist
-for vol in "${DB_VOLUME}" "${DATA_VOLUME}"; do
-  if ! docker volume ls --format '{{.Name}}' | grep -qx "${vol}"; then
-    echo "Creating Docker volume: ${vol}..."
-    docker volume create "${vol}"
-  fi
-done
+# --- Load All Variables from Environment File ---
+echo "Loading environment variables from $ENV_FILE..."
+set -o allexport
+source "$ENV_FILE"
+set +o allexport
 
-# --- Mailu Docker Compose Deployment ---
-echo "Deploying Mailu services..."
-docker-compose -p mailu up -d
+# --- Create Docker Network and Directories ---
+echo "Setting up network and directories..."
+docker network create "$MAILU_NETWORK" 2>/dev/null || true
+mkdir -p /mailu/{certs,data,dkim,mail,overrides/postfix,overrides/dovecot,webmail}
+
+# --- Service Deployment ---
+
+# Function to stop and remove a container if it exists
+remove_container() {
+  local container_name=$1
+  echo "Removing existing container: $container_name..."
+  docker rm -f "$container_name" 2>/dev/null || true
+}
+
+# 1. Remove all existing containers first
+remove_container "$FRONT_CONTAINER"
+remove_container "$ADMIN_CONTAINER"
+remove_container "$IMAP_CONTAINER"
+remove_container "$SMTP_CONTAINER"
+remove_container "$WEBMAIL_CONTAINER"
+
+# 2. Deploy Mailu Services
+echo "Pulling latest Mailu images..."
+docker pull "$DOCKER_ORG/nginx:$MAILU_VERSION"
+docker pull "$DOCKER_ORG/admin:$MAILU_VERSION"
+docker pull "$DOCKER_ORG/dovecot:$MAILU_VERSION"
+docker pull "$DOCKER_ORG/postfix:$MAILU_VERSION"
+docker pull "$DOCKER_ORG/roundcube:$MAILU_VERSION"
+
+
+echo "Deploying Mailu containers..."
+
+# Front Container (Connected to Traefik)
+docker run -d \
+  --name "$FRONT_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --network="$TRAEFIK_NETWORK" \
+  --env-file="$ENV_FILE" \
+  -v /mailu/certs:/certs \
+  -v /mailu/overrides/nginx:/overrides:ro \
+  -l "traefik.enable=true" \
+  -l "traefik.docker.network=$TRAEFIK_NETWORK" \
+  -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
+  -l "traefik.http.routers.mailu-http.entrypoints=web" \
+  -l "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
+  -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`)" \
+  -l "traefik.http.routers.mailu-https.entrypoints=websecure" \
+  -l "traefik.http.routers.mailu-https.tls=true" \
+  -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
+  -l "traefik.http.services.mailu-web.loadbalancer.server.port=80" \
+  -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
+  -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
+  -l "traefik.tcp.services.smtp.loadbalancer.server.port=25" \
+  -l "traefik.tcp.routers.smtps.rule=HostSNI(\`*\`)" \
+  -l "traefik.tcp.routers.smtps.entrypoints=smtps" \
+  -l "traefik.tcp.services.smtps.loadbalancer.server.port=465" \
+  -l "traefik.tcp.routers.smtps.tls.passthrough=true" \
+  -l "traefik.tcp.routers.submission.rule=HostSNI(\`*\`)" \
+  -l "traefik.tcp.routers.submission.entrypoints=submission" \
+  -l "traefik.tcp.services.submission.loadbalancer.server.port=587" \
+  -l "traefik.tcp.routers.imaps.rule=HostSNI(\`*\`)" \
+  -l "traefik.tcp.routers.imaps.entrypoints=imaps" \
+  -l "traefik.tcp.services.imaps.loadbalancer.server.port=993" \
+  -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
+  "$DOCKER_ORG/nginx:$MAILU_VERSION"
+
+# Admin Container
+docker run -d \
+  --name "$ADMIN_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --env-file="$ENV_FILE" \
+  -v /mailu/data:/data \
+  -v /mailu/dkim:/dkim \
+  "$DOCKER_ORG/admin:$MAILU_VERSION"
+
+# IMAP Container
+docker run -d \
+  --name "$IMAP_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --env-file="$ENV_FILE" \
+  -v /mailu/mail:/mail \
+  -v /mailu/overrides/dovecot:/overrides:ro \
+  "$DOCKER_ORG/dovecot:$MAILU_VERSION"
+
+# SMTP Container
+docker run -d \
+  --name "$SMTP_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --env-file="$ENV_FILE" \
+  -v /mailu/overrides/postfix:/overrides:ro \
+  "$DOCKER_ORG/postfix:$MAILU_VERSION"
+
+# Webmail Container
+docker run -d \
+  --name "$WEBMAIL_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --env-file="$ENV_FILE" \
+  -v /mailu/webmail:/data \
+  "$DOCKER_ORG/roundcube:$MAILU_VERSION"
 
 echo
 echo "✔️ Mailu deployment is complete!"
-echo "   Admin interface: https://${HOSTNAMES%%,*}"
-echo "   Webmail: https://${HOSTNAMES%%,*}/webmail"
+echo "   All services started using individual 'docker run' commands."
+echo "   Access via https://$HOSTNAMES"
