@@ -1,49 +1,38 @@
 #!/usr/bin/env bash
+
+# ======================================================================
+# Mailu Backup Script (for docker run methodology)
+# ======================================================================
+# Creates an encrypted backup of the Mailu data volumes.
+# This version works with manually named containers.
+
+# --- Setup and Pre-flight Checks ---
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-# ==============================================================================
-# Mailu Backup Script
-# ==============================================================================
-#
-# Description:
-#   Creates an encrypted backup of the Mailu database and data volume.
-#
-# ==============================================================================
+ENV_FILE="mailu.env" # Assumes mailu.env is in the same directory
 
-# --- Load Environment Variables ---
-source "$(dirname "$0")/mailu.env"
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Error: Environment file not found at $SCRIPT_DIR/$ENV_FILE"
+  exit 1
+fi
+
+# --- Load All Variables from Environment File ---
+echo "Loading environment variables from $ENV_FILE..."
+set -o allexport
+source "$ENV_FILE"
+set +o allexport
 
 # --- Backup Directory Setup ---
 DAY=$(date +%Y-%m-%d)
-BACKUP_FILE="$BACKUP_BASE/mailu-$DAY.tar.gz.gpg"
+BACKUP_FILE="$BACKUP_BASE/mailu-backup-$DAY.tar.gz.gpg"
+
+# Check if GPG_RECIPIENT is set
+if [[ -z "${GPG_RECIPIENT}" ]]; then
+  echo "❌ Error: GPG_RECIPIENT is not set in mailu.env. Cannot create encrypted backup."
+  exit 1
+fi
 
 # Create the backup directory if it doesn't exist
-mkdir -p "$BACKUP_BASE"
-
-# --- Temporary Workspace ---
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
-
-# --- Dump PostgreSQL Database ---
-echo "Dumping PostgreSQL database..."
-docker exec -e PGPASSWORD="$DB_PASSWORD" mailu_db_1 \
-  pg_dump -U "$DB_USER" -d "$DB_NAME" \
-  > "$TMPDIR/db.sql"
-
-# --- Archive Mailu Data Volume ---
-echo "Archiving Mailu data volume..."
-docker run --rm \
-  -v mailu_data:/data \
-  -v "$TMPDIR":/backup \
-  busybox \
-  tar -czf /backup/data.tar.gz -C /data .
-
-# --- Combine and Encrypt ---
-echo "Creating and encrypting the combined backup archive..."
-tar -czf - -C "$TMPDIR" db.sql data.tar.gz | \
-  gpg --batch --yes --output "$BACKUP_FILE" \
-      --encrypt --recipient "$GPG_RECIPIENT"
-
-# --- Cleanup and Completion ---
-echo
-echo "✔️ Backup completed and encrypted to: $BACKUP_FILE"
+mkdir -p "$BACKUP_BASE
