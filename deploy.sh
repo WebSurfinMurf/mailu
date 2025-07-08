@@ -1,3 +1,10 @@
+Of course. Here is the updated version of your `deploy.sh` script with the Redis container added.
+
+I've added the necessary commands to pull the Redis image, remove any old Redis containers, and launch the new one on the correct network.
+
+### Updated `deploy.sh`
+
+```bash
 #!/usr/bin/env bash
 
 # ======================================================================
@@ -44,6 +51,7 @@ remove_container() {
 }
 
 # 1. Remove all existing containers first
+remove_container "redis" # <-- ADD THIS LINE
 remove_container "$FRONT_CONTAINER"
 remove_container "$ADMIN_CONTAINER"
 remove_container "$IMAP_CONTAINER"
@@ -56,11 +64,18 @@ docker pull "$DOCKER_ORG/nginx:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/admin:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/dovecot:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/postfix:$MAILU_VERSION"
-# --- CORRECTED: Pull the unified webmail image ---
 docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
+docker pull redis:alpine # <-- ADD THIS LINE
 
 
 echo "Deploying Mailu containers..."
+
+# Redis Container <-- ADD THIS ENTIRE SECTION
+docker run -d \
+  --name "redis" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  redis:alpine
 
 # Front Container (Connected to Traefik)
 docker run -d \
@@ -134,9 +149,10 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/webmail":/data \
-  "$DOCKER_ORG/webmail:$MAILU_VERSION" # --- CORRECTED: Use the unified webmail image ---
+  "$DOCKER_ORG/webmail:$MAILU_VERSION"
 
 echo
 echo "✔️ Mailu deployment is complete!"
 echo "   All services started using individual 'docker run' commands."
 echo "   Access via https://${HOSTNAMES%%,*}"
+```
