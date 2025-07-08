@@ -1,24 +1,26 @@
-Of course. Here is the updated version of your `deploy.sh` script with the Redis container added.
-
-I've added the necessary commands to pull the Redis image, remove any old Redis containers, and launch the new one on the correct network.
-
-### Updated `deploy.sh`
-
-```bash
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Corrected - No Sudo Required)
+# Mailu Deployment Script (Final Variablized Version)
 # ======================================================================
-# Deploys Mailu using a user-owned data directory to avoid root permissions.
-# Adopts the same environment file loading as the Traefik deploy script.
+# Deploys Mailu and its Redis dependency using variables for container names.
+# This version includes all necessary fixes for a stable deployment.
 
 # --- Setup and Pre-flight Checks ---
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Use a more robust method to find the script directory
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# Check if SCRIPT_DIR is a valid directory
+if [ ! -d "$SCRIPT_DIR" ]; then
+    echo "Error: Could not determine the script's directory."
+    echo "Please run the script from its containing folder."
+    exit 1
+fi
+
 cd "$SCRIPT_DIR"
 
-# Path to the environment file, matching the Traefik deploy script's structure.
+# Path to the environment file
 ENV_FILE="../secrets/mailu.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -51,28 +53,28 @@ remove_container() {
 }
 
 # 1. Remove all existing containers first
-remove_container "redis" # <-- ADD THIS LINE
+remove_container "$REDIS_CONTAINER"
 remove_container "$FRONT_CONTAINER"
 remove_container "$ADMIN_CONTAINER"
 remove_container "$IMAP_CONTAINER"
 remove_container "$SMTP_CONTAINER"
 remove_container "$WEBMAIL_CONTAINER"
 
-# 2. Deploy Mailu Services
-echo "Pulling latest Mailu images..."
+# 2. Deploy Services
+echo "Pulling latest images..."
+docker pull redis:alpine
 docker pull "$DOCKER_ORG/nginx:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/admin:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/dovecot:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/postfix:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
-docker pull redis:alpine # <-- ADD THIS LINE
 
 
-echo "Deploying Mailu containers..."
+echo "Deploying containers..."
 
-# Redis Container <-- ADD THIS ENTIRE SECTION
+# Redis Container
 docker run -d \
-  --name "redis" \
+  --name "$REDIS_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
   redis:alpine
@@ -155,4 +157,3 @@ echo
 echo "✔️ Mailu deployment is complete!"
 echo "   All services started using individual 'docker run' commands."
 echo "   Access via https://${HOSTNAMES%%,*}"
-```
