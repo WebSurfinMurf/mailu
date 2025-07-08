@@ -12,7 +12,7 @@ set -euo pipefail
 # ==============================================================================
 
 # --- Load Environment Variables ---
-source "$(dirname "$0")/mailu.env"
+source "$(dirname "$0")/../secrets/mailu.env"
 
 # --- Docker Network and Volume Setup ---
 NETWORK="traefik-proxy"
