@@ -102,6 +102,7 @@ docker run -d \
   --name "$ADMIN_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
+  --dns=1.1.1.1 \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/data":/data \
   -v "$MAILU_DATA_PATH/dkim":/dkim \
