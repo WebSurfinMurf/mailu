@@ -63,13 +63,13 @@ docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
 echo "Deploying Mailu containers..."
 
 # Front Container (Connected to Traefik)
+# self-signed doesnt need:  -v "$MAILU_DATA_PATH/certs":/certs \
 docker run -d \
   --name "$FRONT_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/certs":/certs \
   -v "$MAILU_DATA_PATH/overrides/nginx":/overrides:ro \
   --label "traefik.enable=true" \
   --label "traefik.docker.network=traefik-proxy" \
