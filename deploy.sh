@@ -3,7 +3,7 @@
 # ======================================================================
 # Mailu Deployment Script (Final Corrected Version)
 # ======================================================================
-# Deploys Mailu and its Redis dependency using variables for container names.
+# Deploys Mailu using certificates provided by an external source (Traefik).
 # This version includes all necessary fixes for a stable deployment.
 
 # --- Setup and Pre-flight Checks ---
@@ -41,7 +41,7 @@ MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 # --- Create Docker Network and User-Owned Directories ---
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
 docker network create "$MAILU_NETWORK" 2>/dev/null || true
-mkdir -p "$MAILU_DATA_PATH"/{certs,data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
+mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
 
 # --- Service Deployment ---
 
@@ -87,7 +87,7 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/certs":/certs \
+  -v "$SCRIPT_DIR/../traefik/certs":/certs:ro \
   -v "$MAILU_DATA_PATH/overrides/nginx":/overrides:ro \
   -l "traefik.enable=true" \
   -l "traefik.docker.network=$TRAEFIK_NETWORK" \
