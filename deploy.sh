@@ -70,6 +70,7 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
+  -v "$SCRIPT_DIR/../secrets/certs/mailu.ai-servicers.com":/certs:ro \
   -v "$MAILU_DATA_PATH/overrides/nginx":/overrides:ro \
   --label "traefik.enable=true" \
   --label "traefik.docker.network=traefik-proxy" \
