@@ -77,6 +77,7 @@ docker run -d \
   --name "$REDIS_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
+  --network-alias redis \
   redis:alpine
 
 # Front Container (Connected to Traefik)
