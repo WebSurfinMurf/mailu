@@ -1,26 +1,17 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Final Corrected Version)
+# Mailu Deployment Script (Corrected - No Sudo Required)
 # ======================================================================
-# Deploys Mailu using certificates provided by an external source (Traefik).
-# This version includes all necessary fixes for a stable deployment.
+# Deploys Mailu using a user-owned data directory to avoid root permissions.
+# Adopts the same environment file loading as the Traefik deploy script.
 
 # --- Setup and Pre-flight Checks ---
 set -euo pipefail
-# Use a more robust method to find the script directory
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
-
-# Check if SCRIPT_DIR is a valid directory
-if [ ! -d "$SCRIPT_DIR" ]; then
-    echo "Error: Could not determine the script's directory."
-    echo "Please run the script from its containing folder."
-    exit 1
-fi
-
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Path to the environment file
+# Path to the environment file, matching the Traefik deploy script's structure.
 ENV_FILE="../secrets/mailu.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -41,7 +32,7 @@ MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 # --- Create Docker Network and User-Owned Directories ---
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
 docker network create "$MAILU_NETWORK" 2>/dev/null || true
-mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
+mkdir -p "$MAILU_DATA_PATH"/{certs,data,dkim,mail,overrides/postfix,overrides/dovecot,webmail}
 
 # --- Service Deployment ---
 
@@ -53,32 +44,23 @@ remove_container() {
 }
 
 # 1. Remove all existing containers first
-remove_container "$REDIS_CONTAINER"
 remove_container "$FRONT_CONTAINER"
 remove_container "$ADMIN_CONTAINER"
 remove_container "$IMAP_CONTAINER"
 remove_container "$SMTP_CONTAINER"
 remove_container "$WEBMAIL_CONTAINER"
 
-# 2. Deploy Services
-echo "Pulling latest images..."
-docker pull redis:alpine
+# 2. Deploy Mailu Services
+echo "Pulling latest Mailu images..."
 docker pull "$DOCKER_ORG/nginx:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/admin:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/dovecot:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/postfix:$MAILU_VERSION"
+# --- CORRECTED: Pull the unified webmail image ---
 docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
 
 
-echo "Deploying containers..."
-
-# Redis Container
-docker run -d \
-  --name "$REDIS_CONTAINER" \
-  --restart=always \
-  --network="$MAILU_NETWORK" \
-  --network-alias redis \
-  redis:alpine
+echo "Deploying Mailu containers..."
 
 # Front Container (Connected to Traefik)
 docker run -d \
@@ -87,18 +69,18 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
-  -v "$SCRIPT_DIR/../traefik/certs/mailu.ai-servicers.com":/certs:ro \
+  -v "$MAILU_DATA_PATH/certs":/certs \
   -v "$MAILU_DATA_PATH/overrides/nginx":/overrides:ro \
-  -l "traefik.enable=true" \
-  -l "traefik.docker.network=$TRAEFIK_NETWORK" \
-  -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
-  -l "traefik.http.routers.mailu-http.entrypoints=web" \
-  -l "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
-  -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`)" \
-  -l "traefik.http.routers.mailu-https.entrypoints=websecure" \
-  -l "traefik.http.routers.mailu-https.tls=true" \
-  -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
-  -l "traefik.http.services.mailu-web.loadbalancer.server.port=80" \
+  --label "traefik.enable=true" \
+  --label "traefik.docker.network=traefik-proxy" \
+  --label "traefik.http.routers.mailu-http.rule=Host(\`mailu.ai-servicers.com\`)" \
+  --label "traefik.http.routers.mailu-http.entrypoints=web" \
+  --label "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
+  --label "traefik.http.routers.mailu-https.rule=Host(\`mailu.ai-servicers.com\`)" \
+  --label "traefik.http.routers.mailu-https.entrypoints=websecure" \
+  --label "traefik.http.routers.mailu-https.tls=true" \
+  --label "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
+  --label "traefik.http.services.mailu-web.loadbalancer.server.port=80" \
   -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
   -l "traefik.tcp.services.smtp.loadbalancer.server.port=25" \
@@ -120,7 +102,6 @@ docker run -d \
   --name "$ADMIN_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
-  --dns=1.1.1.1 \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/data":/data \
   -v "$MAILU_DATA_PATH/dkim":/dkim \
@@ -142,7 +123,6 @@ docker run -d \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/mailqueue":/queue \
   -v "$MAILU_DATA_PATH/overrides/postfix":/overrides:ro \
   "$DOCKER_ORG/postfix:$MAILU_VERSION"
 
@@ -153,7 +133,7 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/webmail":/data \
-  "$DOCKER_ORG/webmail:$MAILU_VERSION"
+  "$DOCKER_ORG/webmail:$MAILU_VERSION" # --- CORRECTED: Use the unified webmail image ---
 
 echo
 echo "✔️ Mailu deployment is complete!"
