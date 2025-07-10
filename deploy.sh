@@ -88,13 +88,18 @@ docker run -d \
   --env-file="$ENV_FILE" \
   -v "$SCRIPT_DIR/../secrets/certs/mailu.ai-servicers.com":/certs:ro \
   -v "$MAILU_DATA_PATH/overrides/nginx":/overrides:ro \
-  -l "traefik.enable=true" \
-  -l "traefik.docker.network=$TRAEFIK_NETWORK" \
-  -l "traefik.tcp.routers.mailu-web-tcp.rule=HostSNI(\`mailu.ai-servicers.com\`)" \
-  -l "traefik.tcp.routers.mailu-web-tcp.entrypoints=websecure" \
-  -l "traefik.tcp.routers.mailu-web-tcp.service=mailu-web-tcp-svc" \
-  -l "traefik.tcp.routers.mailu-web-tcp.tls.passthrough=true" \
-  -l "traefik.tcp.services.mailu-web-tcp-svc.loadbalancer.server.port=443" \
+  --label "traefik.enable=true" \
+  --label "traefik.docker.network=traefik-proxy" \
+  --label "traefik.http.routers.mailu-http.rule=Host(\`mailu.ai-servicers.com\`)" \
+  --label "traefik.http.routers.mailu-http.entrypoints=web" \
+  --label "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
+  --label "traefik.http.routers.mailu-https.rule=Host(\`mailu.ai-servicers.com\`)" \
+  --label "traefik.http.routers.mailu-https.entrypoints=websecure" \
+  --label "traefik.http.routers.mailu-https.tls=true" \
+  --label "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
+  --label "traefik.http.routers.mailu-https.tls.domains[0].main=ai-servicers.com" \
+  --label "traefik.http.routers.mailu-https.tls.domains[0].sans=*.ai-servicers.com" \
+  --label "traefik.http.services.mailu-web.loadbalancer.server.port=80" \
   -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
   -l "traefik.tcp.services.smtp.loadbalancer.server.port=25" \
