@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Final with TCP Passthrough)
+# Mailu Deployment Script (Final with Wildcard Certs)
 # ======================================================================
-# Deploys Mailu with the front-end configured for TCP passthrough with Traefik.
+# Deploys Mailu with the front-end configured to use a wildcard certificate
+# managed by Traefik.
 
 # --- Setup and Pre-flight Checks ---
 set -euo pipefail
@@ -40,7 +41,7 @@ MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 # --- Create Docker Network and User-Owned Directories ---
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
 docker network create "$MAILU_NETWORK" 2>/dev/null || true
-mkdir -p "$MAILU_DATA_PATH"/{certs,data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
+mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
 
 # --- Service Deployment ---
 
