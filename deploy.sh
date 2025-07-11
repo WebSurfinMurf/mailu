@@ -75,14 +75,13 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --network-alias redis \
   redis:alpine
-
+#   --network="$TRAEFIK_NETWORK" \
 # Front Container (Connected to Traefik)
 docker run -d \
   --name "$FRONT_CONTAINER" \
   --restart=always \
   -p 8666:80 \
   --network="$MAILU_NETWORK" \
-  --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/overrides/nginx:/overrides:ro" \
   -v "/home/websurfinmurf/projects/traefik/certs/ai-servicers.com:/certs:ro" \
