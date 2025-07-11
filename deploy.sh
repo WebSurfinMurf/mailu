@@ -90,7 +90,7 @@ docker run -d \
   -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-http.entrypoints=web" \
   -l "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
-  -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`)" \
+  -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`) && (PathPrefix(\`/admin\`) || PathPrefix(\`/webmail\`) || PathPrefix(\`/sso\`) || PathPrefix(\`/static\`))" \
   -l "traefik.http.routers.mailu-https.entrypoints=websecure" \
   -l "traefik.http.routers.mailu-https.tls=true" \
   -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
