@@ -81,7 +81,6 @@ docker run -d \
   -v "/home/websurfinmurf/projects/traefik/certs/ai-servicers.com:/certs:ro" \
   -l "traefik.enable=true" \
   -l "traefik.docker.network=$TRAEFIK_NETWORK" \
-  # --- Web UI & Webmail Routing ---
   -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-http.entrypoints=web" \
   -l "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
@@ -91,7 +90,6 @@ docker run -d \
   -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
   -l "traefik.http.routers.mailu-https.service=mailu-service" \
   -l "traefik.http.services.mailu-service.loadbalancer.server.port=80" \
-  # --- Mail Ports (TCP Passthrough) ---
   -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
   -l "traefik.tcp.routers.smtp.service=smtp-service" \
