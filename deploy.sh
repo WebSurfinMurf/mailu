@@ -85,6 +85,7 @@ docker run -d \
   --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/overrides/nginx:/overrides:ro" \
+  -v "/home/websurfinmurf/projects/traefik/certs/ai-servicers.com:/certs:ro" \
   -l "traefik.enable=true" \
   -l "traefik.docker.network=$TRAEFIK_NETWORK" \
   -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
@@ -95,16 +96,10 @@ docker run -d \
   -l "traefik.http.routers.mailu-https.tls=true" \
   -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
   -l "traefik.http.services.mailu-web.loadbalancer.server.port=80" \
-  -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
-  -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
-  -l "traefik.tcp.services.smtp.loadbalancer.server.port=25" \
   -l "traefik.tcp.routers.smtps.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtps.entrypoints=smtps" \
   -l "traefik.tcp.services.smtps.loadbalancer.server.port=465" \
   -l "traefik.tcp.routers.smtps.tls.passthrough=true" \
-  -l "traefik.tcp.routers.submission.rule=HostSNI(\`*\`)" \
-  -l "traefik.tcp.routers.submission.entrypoints=submission" \
-  -l "traefik.tcp.services.submission.loadbalancer.server.port=587" \
   -l "traefik.tcp.routers.imaps.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.imaps.entrypoints=imaps" \
   -l "traefik.tcp.services.imaps.loadbalancer.server.port=993" \
