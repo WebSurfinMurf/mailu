@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Final with Wildcard Certs)
+# Mailu Deployment Script (Final Corrected Version)
 # ======================================================================
-# Deploys Mailu with the front-end configured to use a wildcard certificate
-# managed by Traefik.
+# Deploys Mailu with the front-end configured for mail-only TLS,
+# allowing Traefik to handle all web traffic and SSL termination.
 
 # --- Setup and Pre-flight Checks ---
 set -euo pipefail
