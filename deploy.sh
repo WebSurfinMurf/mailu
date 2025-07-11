@@ -104,7 +104,8 @@ docker run -d \
   -l "traefik.tcp.routers.imaps.entrypoints=imaps" \
   -l "traefik.tcp.services.imaps.loadbalancer.server.port=993" \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
-  "$DOCKER_ORG/nginx:$MAILU_VERSION" 
+  "$DOCKER_ORG/nginx:$MAILU_VERSION" \
+  sh -c "echo '--- Environment Variables ---' && printenv && echo '--- End of Environment ---' && sleep infinity"
 
 # Admin Container
 docker run -d \
