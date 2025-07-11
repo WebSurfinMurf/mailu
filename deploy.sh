@@ -117,15 +117,22 @@ docker run -d \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
 # sh -c "echo '--- Environment Variables ---' && printenv && echo '--- End of Environment ---' && sleep infinity"
 
-# Admin Container
 docker run -d \
   --name "$ADMIN_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
+  --network="$TRAEFIK_NETWORK" \
   --dns=1.1.1.1 \
   --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/data:/data" \
-  -v "$MAILU_DATA_PATH/dkim:/dkim" \
+  -v "$MAILU_DATA_PATH/data":/data \
+  -v "$MAILU_DATA_PATH/dkim":/dkim \
+  -l "traefik.enable=true" \
+  -l "traefik.docker.network=$TRAEFIK_NETWORK" \
+  -l "traefik.http.routers.mailu-admin.rule=Host(\`mailu.ai-servicers.com\`) && PathPrefix(\`/admin\`) " \
+  -l "traefik.http.routers.mailu-admin.entrypoints=websecure" \
+  -l "traefik.http.routers.mailu-admin.service=mailu-admin" \
+  -l "traefik.http.services.mailu-admin.loadbalancer.server.port=8080" \
+  -l "traefik.http.routers.mailu-admin.tls=true" \
   "$DOCKER_ORG/admin:$MAILU_VERSION"
 
 # IMAP Container
