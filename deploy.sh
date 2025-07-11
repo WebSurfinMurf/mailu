@@ -110,12 +110,13 @@ docker run -d \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
 
+#  --network="$TRAEFIK_NETWORK" \
 # Admin Container (No direct Traefik labels needed)
 docker run -d \
   --name "$ADMIN_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
-  --network="$TRAEFIK_NETWORK" \
+  --dns=1.1.1.1 \  
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/data":/data \
   -v "$MAILU_DATA_PATH/dkim":/dkim \
