@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Final Corrected Version)
+# Mailu Deployment Script (Final Verified Version)
 # ======================================================================
-# Deploys Mailu with the front-end configured for mail-only TLS,
-# allowing Traefik to handle all web traffic and SSL termination.
+# Deploys Mailu with the front-end handling all web routing and
+# Traefik handling SSL termination and mail protocol passthrough.
 
 # --- Setup and Pre-flight Checks ---
 set -euo pipefail
@@ -17,7 +17,6 @@ fi
 
 cd "$SCRIPT_DIR"
 
-# Path to the environment file (assuming it's in a parent 'secrets' dir)
 ENV_FILE="../secrets/mailu.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -32,24 +31,20 @@ set -o allexport
 source "$ENV_FILE"
 set +o allexport
 
-# --- Define the data directory inside the project folder ---
+# --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
-
-# --- Create Docker Network and User-Owned Directories ---
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
 docker network create "$MAILU_NETWORK" 2>/dev/null || true
 mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
 
 # --- Service Deployment ---
-
-# Function to stop and remove a container if it exists
 remove_container() {
   local container_name=$1
   echo "Removing existing container: $container_name..."
   docker rm -f "$container_name" 2>/dev/null || true
 }
 
-# 1. Remove all existing containers first
+echo "Removing all existing Mailu containers..."
 remove_container "$REDIS_CONTAINER"
 remove_container "$FRONT_CONTAINER"
 remove_container "$ADMIN_CONTAINER"
@@ -57,7 +52,6 @@ remove_container "$IMAP_CONTAINER"
 remove_container "$SMTP_CONTAINER"
 remove_container "$WEBMAIL_CONTAINER"
 
-# 2. Deploy Services
 echo "Pulling latest images..."
 docker pull redis:alpine
 docker pull "$DOCKER_ORG/nginx:$MAILU_VERSION"
@@ -76,11 +70,10 @@ docker run -d \
   --network-alias redis \
   redis:alpine
 
-# Front Container (Connected to Traefik)
+# Front Container (The main entrypoint for Traefik)
 docker run -d \
   --name "$FRONT_CONTAINER" \
   --restart=always \
-  -p 8666:80 \
   --network="$MAILU_NETWORK" \
   --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
@@ -88,15 +81,17 @@ docker run -d \
   -v "/home/websurfinmurf/projects/traefik/certs/ai-servicers.com:/certs:ro" \
   -l "traefik.enable=true" \
   -l "traefik.docker.network=$TRAEFIK_NETWORK" \
+  # --- Web UI & Webmail Routing ---
   -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-http.entrypoints=web" \
   -l "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
-  -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`) && (PathPrefix(\`/admin\`) || PathPrefix(\`/webmail\`) || PathPrefix(\`/sso\`) || PathPrefix(\`/static\`))" \
+  -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-https.entrypoints=websecure" \
   -l "traefik.http.routers.mailu-https.tls=true" \
   -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
   -l "traefik.http.routers.mailu-https.service=mailu-service" \
   -l "traefik.http.services.mailu-service.loadbalancer.server.port=80" \
+  # --- Mail Ports (TCP Passthrough) ---
   -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
   -l "traefik.tcp.routers.smtp.service=smtp-service" \
@@ -116,9 +111,8 @@ docker run -d \
   -l "traefik.tcp.services.imaps-service.loadbalancer.server.port=993" \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
-# sh -c "echo '--- Environment Variables ---' && printenv && echo '--- End of Environment ---' && sleep infinity"
 
-#  --dns=1.1.1.1 \
+# Admin Container (No direct Traefik labels needed)
 docker run -d \
   --name "$ADMIN_CONTAINER" \
   --restart=always \
@@ -127,13 +121,6 @@ docker run -d \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/data":/data \
   -v "$MAILU_DATA_PATH/dkim":/dkim \
-  -l "traefik.enable=true" \
-  -l "traefik.docker.network=$TRAEFIK_NETWORK" \
-  -l "traefik.http.routers.mailu-admin.rule=Host(\`mailu.ai-servicers.com\`) && PathPrefix(\`/admin\`) " \
-  -l "traefik.http.routers.mailu-admin.entrypoints=websecure" \
-  -l "traefik.http.routers.mailu-admin.service=mailu-admin" \
-  -l "traefik.http.services.mailu-admin.loadbalancer.server.port=8080" \
-  -l "traefik.http.routers.mailu-admin.tls=true" \
   "$DOCKER_ORG/admin:$MAILU_VERSION"
 
 # IMAP Container
