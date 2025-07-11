@@ -77,7 +77,6 @@ docker run -d \
   redis:alpine
 
 # Front Container (Connected to Traefik)
-# CORRECTED: Removed explicit tls.domains labels to let Traefik use existing certs.
 docker run -d \
   --name "$FRONT_CONTAINER" \
   --restart=always \
@@ -95,14 +94,25 @@ docker run -d \
   -l "traefik.http.routers.mailu-https.entrypoints=websecure" \
   -l "traefik.http.routers.mailu-https.tls=true" \
   -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
-  -l "traefik.http.services.mailu-web.loadbalancer.server.port=80" \
+  -l "traefik.http.routers.mailu-https.service=mailu-service" \
+  -l "traefik.http.services.mailu-service.loadbalancer.server.port=80" \
+  -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
+  -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
+  -l "traefik.tcp.routers.smtp.service=smtp-service" \
+  -l "traefik.tcp.services.smtp-service.loadbalancer.server.port=25" \
   -l "traefik.tcp.routers.smtps.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtps.entrypoints=smtps" \
-  -l "traefik.tcp.services.smtps.loadbalancer.server.port=465" \
+  -l "traefik.tcp.routers.smtps.service=smtps-service" \
+  -l "traefik.tcp.services.smtps-service.loadbalancer.server.port=465" \
   -l "traefik.tcp.routers.smtps.tls.passthrough=true" \
+  -l "traefik.tcp.routers.submission.rule=HostSNI(\`*\`)" \
+  -l "traefik.tcp.routers.submission.entrypoints=submission" \
+  -l "traefik.tcp.routers.submission.service=submission-service" \
+  -l "traefik.tcp.services.submission-service.loadbalancer.server.port=587" \
   -l "traefik.tcp.routers.imaps.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.imaps.entrypoints=imaps" \
-  -l "traefik.tcp.services.imaps.loadbalancer.server.port=993" \
+  -l "traefik.tcp.routers.imaps.service=imaps-service" \
+  -l "traefik.tcp.services.imaps-service.loadbalancer.server.port=993" \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
 # sh -c "echo '--- Environment Variables ---' && printenv && echo '--- End of Environment ---' && sleep infinity"
