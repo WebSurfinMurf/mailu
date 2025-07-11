@@ -80,6 +80,7 @@ docker run -d \
 docker run -d \
   --name "$FRONT_CONTAINER" \
   --restart=always \
+  -p 8666:80 \
   --network="$MAILU_NETWORK" \
   --network="$TRAEFIK_NETWORK" \
   --env-file="$ENV_FILE" \
