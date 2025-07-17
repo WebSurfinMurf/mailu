@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Final Verified Version with Unbound Resolver)
+# Mailu Deployment Script (Final Verified Version with Static IP Resolver)
 # ======================================================================
-# Deploys Mailu with the official unbound resolver to handle DNSSEC,
-# and Traefik for reverse proxy and mail protocol passthrough.
+# Deploys Mailu with a static IP for the unbound DNS resolver to solve
+# the DNSSEC validation issue permanently and reliably.
 
 # --- Setup and Pre-flight Checks ---
 set -euo pipefail
@@ -32,7 +32,8 @@ set +o allexport
 # --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
-docker network create "$MAILU_NETWORK" 2>/dev/null || true
+# --- CREATE THE NETWORK WITH OUR SUBNET ---
+docker network create --subnet=$SUBNET "$MAILU_NETWORK" 2>/dev/null || true
 mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
 
 # --- Service Deployment ---
@@ -60,12 +61,12 @@ docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
 
 echo "Deploying containers..."
 
-# DNS Resolver (Unbound)
+# DNS Resolver (Unbound) with a Static IP
 docker run -d \
   --name "$RESOLVER_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
-  --network-alias resolver \
+  --ip="$RESOLVER_ADDRESS" \
   -v "$MAILU_DATA_PATH/unbound:/etc/unbound" \
   "$DOCKER_ORG/unbound:$MAILU_VERSION"
 
@@ -74,10 +75,9 @@ docker run -d \
   --name "$REDIS_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
-  --network-alias redis \
   redis:alpine
 
-# Admin Container (Points to the Unbound resolver)
+# Admin Container (Points to the Unbound resolver's static IP)
 docker run -d \
   --name "$ADMIN_CONTAINER" \
   --restart=always \
