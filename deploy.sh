@@ -31,7 +31,8 @@ set +o allexport
 
 # --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
-echo "Setting up network and directories in $MAILU_DATA_PATH..."
+echo "Setting up data directories in $MAILU_DATA_PATH..."
+mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
 
 # --- Service Deployment ---
 remove_container() {
@@ -47,11 +48,11 @@ remove_container "$SMTP_CONTAINER"
 remove_container "$WEBMAIL_CONTAINER"
 remove_container "$RESOLVER_CONTAINER"
 
-# --- RECREATE THE NETWORK TO ENSURE SUBNET IS SET ---
+# --- Recreate the Network ---
+# This is now done AFTER removing the containers to avoid errors.
 echo "Recreating Docker network '$MAILU_NETWORK' to ensure correct subnet..."
 docker network rm "$MAILU_NETWORK" 2>/dev/null || true
 docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
-mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
 
 echo "Pulling latest images..."
 docker pull redis:alpine
@@ -62,7 +63,7 @@ docker pull "$DOCKER_ORG/dovecot:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/postfix:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
 
-echo "Deploying containers..."
+echo "Deploying core services..."
 
 # DNS Resolver (Unbound) with a Static IP
 docker run -d \
@@ -79,6 +80,26 @@ docker run -d \
   --restart=always \
   --network="$MAILU_NETWORK" \
   redis:alpine
+
+# --- Health Checks ---
+# Wait for core services to be ready before starting dependent services.
+
+echo "Waiting for Unbound DNS resolver to be ready..."
+until docker exec "$RESOLVER_CONTAINER" dig @127.0.0.1 google.com +short | grep -q '[0-9]'; do
+  echo "  - Unbound not ready yet, waiting 2 seconds..."
+  sleep 2
+done
+echo "✔️ Unbound is ready."
+
+echo "Waiting for Redis to be ready..."
+until docker exec "$REDIS_CONTAINER" redis-cli ping | grep -q "PONG"; do
+  echo "  - Redis not ready yet, waiting 2 seconds..."
+  sleep 2
+done
+echo "✔️ Redis is ready."
+
+
+echo "Deploying remaining Mailu services..."
 
 # Admin Container (Points to the Unbound resolver's static IP)
 docker run -d \
