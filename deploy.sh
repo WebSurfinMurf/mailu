@@ -16,8 +16,6 @@ if [ ! -d "$SCRIPT_DIR" ]; then
 fi
 
 cd "$SCRIPT_DIR"
-# This assumes your mailu.env file is in a 'secrets' directory one level up.
-# Adjust the path if your structure is different.
 ENV_FILE="../secrets/mailu.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -89,6 +87,7 @@ docker run -d \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --ip="$RESOLVER_ADDRESS" \
+  --env-file="$ENV_FILE" \
   -v "$UNBOUND_DATA_PATH:/etc/unbound" \
   "$DOCKER_ORG/unbound:$MAILU_VERSION"
 
