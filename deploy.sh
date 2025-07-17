@@ -87,7 +87,6 @@ docker run -d \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --ip="$RESOLVER_ADDRESS" \
-  -v "$UNBOUND_CONF_DEST_PATH:/etc/unbound/unbound.conf:ro" \
   -v "$UNBOUND_DATA_PATH:/etc/unbound" \
   "$DOCKER_ORG/unbound:$MAILU_VERSION"
 
