@@ -81,15 +81,21 @@ docker run -d \
   -v "/home/websurfinmurf/projects/traefik/certs/ai-servicers.com:/certs:ro" \
   -l "traefik.enable=true" \
   -l "traefik.docker.network=$TRAEFIK_NETWORK" \
+  # --- Web Routing ---
   -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-http.entrypoints=web" \
   -l "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
   -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-https.entrypoints=websecure" \
-  -l "traefik.http.routers.mailu-https.tls=true" \
-  -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
   -l "traefik.http.routers.mailu-https.service=mailu-service" \
+  # --- CORRECTED: New TLS Labels for Wildcard Certificate ---
+  --label "traefik.http.routers.mailu-https.tls=true" \
+  --label "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
+  --label "traefik.http.routers.mailu-https.tls.domains[0].main=ai-servicers.com" \
+  --label "traefik.http.routers.mailu-https.tls.domains[0].sans=*.ai-servicers.com" \
+  # --- Service Definition ---
   -l "traefik.http.services.mailu-service.loadbalancer.server.port=80" \
+  # --- Mail Ports (TCP Passthrough) ---
   -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
   -l "traefik.tcp.routers.smtp.service=smtp-service" \
@@ -110,13 +116,11 @@ docker run -d \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
 
-#  --network="$TRAEFIK_NETWORK" \
 # Admin Container (No direct Traefik labels needed)
 docker run -d \
   --name "$ADMIN_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
-  --dns=1.1.1.1 \  
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/data":/data \
   -v "$MAILU_DATA_PATH/dkim":/dkim \
