@@ -34,6 +34,7 @@ MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 UNBOUND_DATA_PATH="$MAILU_DATA_PATH/unbound"
 UNBOUND_CONF_DEST_PATH="$UNBOUND_DATA_PATH/unbound.conf"
 ROOT_HINTS_DEST_PATH="$UNBOUND_DATA_PATH/root.hints"
+TRUSTED_KEY_DEST_PATH="$UNBOUND_DATA_PATH/trusted-key.key"
 LOCAL_UNBOUND_CONF_SRC="$SCRIPT_DIR/unbound.conf"
 
 echo "Setting up data directories in $MAILU_DATA_PATH..."
@@ -54,6 +55,10 @@ cp "$LOCAL_UNBOUND_CONF_SRC" "$UNBOUND_CONF_DEST_PATH"
 # --- Download root.hints file to ensure it's available ---
 echo "Downloading latest root.hints file..."
 curl -s -o "$ROOT_HINTS_DEST_PATH" https://www.internic.net/domain/named.root
+
+# --- Create empty trusted-key.key file so Unbound can use it ---
+echo "Ensuring trusted-key.key file exists..."
+touch "$TRUSTED_KEY_DEST_PATH"
 
 
 # --- Service Deployment ---
@@ -113,7 +118,7 @@ done
 echo "✔️ Unbound is ready."
 
 echo "Waiting for Redis to be ready..."
-until LD_PRELOAD="" docker exec "$REDIS_CONTAINER" redis-cli ping | grep -q "PONG"; do
+until LD_PRELOAD="" docker exec "$RESOLVER_CONTAINER" redis-cli ping | grep -q "PONG"; do
   echo "  - Redis not ready yet, waiting 2 seconds..."
   sleep 2
 done
