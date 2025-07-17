@@ -34,6 +34,10 @@ MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 echo "Setting up data directories in $MAILU_DATA_PATH..."
 mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
 
+# --- Clean up previous unbound config to prevent errors ---
+echo "Removing potentially corrupt Unbound config..."
+rm -f "$MAILU_DATA_PATH/unbound/unbound.conf"
+
 # --- Service Deployment ---
 remove_container() {
   docker rm -f "$1" 2>/dev/null || true
