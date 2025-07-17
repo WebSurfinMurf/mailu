@@ -32,8 +32,10 @@ set +o allexport
 # --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
-# --- CREATE THE NETWORK WITH OUR SUBNET ---
-docker network create --subnet=$SUBNET "$MAILU_NETWORK" 2>/dev/null || true
+# --- CORRECTED: Force network recreation to ensure subnet is set ---
+echo "Recreating Docker network '$MAILU_NETWORK' to ensure correct subnet..."
+docker network rm "$MAILU_NETWORK" 2>/dev/null || true
+docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
 mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
 
 # --- Service Deployment ---
