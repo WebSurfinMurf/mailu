@@ -56,11 +56,6 @@ cp "$LOCAL_UNBOUND_CONF_SRC" "$UNBOUND_CONF_DEST_PATH"
 echo "Downloading latest root.hints file..."
 curl -s -o "$ROOT_HINTS_DEST_PATH" https://www.internic.net/domain/named.root
 
-# --- Create empty trusted-key.key file so Unbound can use it ---
-echo "Ensuring trusted-key.key file exists..."
-touch "$TRUSTED_KEY_DEST_PATH"
-
-
 # --- Service Deployment ---
 remove_container() {
   docker rm -f "$1" 2>/dev/null || true
