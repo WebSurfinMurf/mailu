@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Final Verified Version)
+# Mailu Deployment Script (Final Verified Version with Unbound Resolver)
 # ======================================================================
-# Deploys Mailu with the front-end handling all web routing and
-# Traefik handling SSL termination and mail protocol passthrough.
+# Deploys Mailu with the official unbound resolver to handle DNSSEC,
+# and Traefik for reverse proxy and mail protocol passthrough.
 
 # --- Setup and Pre-flight Checks ---
 set -euo pipefail
@@ -16,12 +16,10 @@ if [ ! -d "$SCRIPT_DIR" ]; then
 fi
 
 cd "$SCRIPT_DIR"
-
 ENV_FILE="../secrets/mailu.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Error: Environment file not found at $ENV_FILE" >&2
-  echo "Please ensure your mailu.env file is located in the '../secrets' directory." >&2
   exit 1
 fi
 
@@ -35,13 +33,11 @@ set +o allexport
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
 docker network create "$MAILU_NETWORK" 2>/dev/null || true
-mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
+mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
 
 # --- Service Deployment ---
 remove_container() {
-  local container_name=$1
-  echo "Removing existing container: $container_name..."
-  docker rm -f "$container_name" 2>/dev/null || true
+  docker rm -f "$1" 2>/dev/null || true
 }
 
 echo "Removing all existing Mailu containers..."
@@ -51,9 +47,11 @@ remove_container "$ADMIN_CONTAINER"
 remove_container "$IMAP_CONTAINER"
 remove_container "$SMTP_CONTAINER"
 remove_container "$WEBMAIL_CONTAINER"
+remove_container "$RESOLVER_CONTAINER"
 
 echo "Pulling latest images..."
 docker pull redis:alpine
+docker pull "$DOCKER_ORG/unbound:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/nginx:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/admin:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/dovecot:$MAILU_VERSION"
@@ -61,6 +59,15 @@ docker pull "$DOCKER_ORG/postfix:$MAILU_VERSION"
 docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
 
 echo "Deploying containers..."
+
+# DNS Resolver (Unbound)
+docker run -d \
+  --name "$RESOLVER_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --network-alias resolver \
+  -v "$MAILU_DATA_PATH/unbound:/etc/unbound" \
+  "$DOCKER_ORG/unbound:$MAILU_VERSION"
 
 # Redis Container
 docker run -d \
@@ -70,12 +77,24 @@ docker run -d \
   --network-alias redis \
   redis:alpine
 
+# Admin Container (Points to the Unbound resolver)
+docker run -d \
+  --name "$ADMIN_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --dns="$RESOLVER_ADDRESS" \
+  --env-file="$ENV_FILE" \
+  -v "$MAILU_DATA_PATH/data":/data \
+  -v "$MAILU_DATA_PATH/dkim":/dkim \
+  "$DOCKER_ORG/admin:$MAILU_VERSION"
+
 # Front Container (The main entrypoint for Traefik)
 docker run -d \
   --name "$FRONT_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --network="$TRAEFIK_NETWORK" \
+  --dns="$RESOLVER_ADDRESS" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/overrides/nginx:/overrides:ro" \
   -v "/home/websurfinmurf/projects/traefik/certs/ai-servicers.com:/certs:ro" \
@@ -112,21 +131,12 @@ docker run -d \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
 
-# Admin Container (No direct Traefik labels needed)
-docker run -d \
-  --name "$ADMIN_CONTAINER" \
-  --restart=always \
-  --network="$MAILU_NETWORK" \
-  --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/data":/data \
-  -v "$MAILU_DATA_PATH/dkim":/dkim \
-  "$DOCKER_ORG/admin:$MAILU_VERSION"
-
 # IMAP Container
 docker run -d \
   --name "$IMAP_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
+  --dns="$RESOLVER_ADDRESS" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/mail:/mail" \
   -v "$MAILU_DATA_PATH/overrides/dovecot:/overrides:ro" \
@@ -137,6 +147,7 @@ docker run -d \
   --name "$SMTP_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
+  --dns="$RESOLVER_ADDRESS" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/mailqueue:/queue" \
   -v "$MAILU_DATA_PATH/overrides/postfix:/overrides:ro" \
@@ -147,6 +158,7 @@ docker run -d \
   --name "$WEBMAIL_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
+  --dns="$RESOLVER_ADDRESS" \
   --env-file="$ENV_FILE" \
   -v "$MAILU_DATA_PATH/webmail:/data" \
   "$DOCKER_ORG/webmail:$MAILU_VERSION"
