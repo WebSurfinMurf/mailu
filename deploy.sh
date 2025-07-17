@@ -32,11 +32,6 @@ set +o allexport
 # --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
-# --- RECREATE THE NETWORK TO ENSURE SUBNET IS SET ---
-echo "Recreating Docker network '$MAILU_NETWORK' to ensure correct subnet..."
-docker network rm "$MAILU_NETWORK" 2>/dev/null || true
-docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
-mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
 
 # --- Service Deployment ---
 remove_container() {
@@ -51,6 +46,12 @@ remove_container "$IMAP_CONTAINER"
 remove_container "$SMTP_CONTAINER"
 remove_container "$WEBMAIL_CONTAINER"
 remove_container "$RESOLVER_CONTAINER"
+
+# --- RECREATE THE NETWORK TO ENSURE SUBNET IS SET ---
+echo "Recreating Docker network '$MAILU_NETWORK' to ensure correct subnet..."
+docker network rm "$MAILU_NETWORK" 2>/dev/null || true
+docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
+mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
 
 echo "Pulling latest images..."
 docker pull redis:alpine
