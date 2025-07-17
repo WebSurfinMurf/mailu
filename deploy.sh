@@ -31,12 +31,25 @@ set +o allexport
 
 # --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
-echo "Setting up data directories in $MAILU_DATA_PATH..."
-mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail,unbound}
+UNBOUND_DATA_PATH="$MAILU_DATA_PATH/unbound"
+UNBOUND_CONF_DEST_PATH="$UNBOUND_DATA_PATH/unbound.conf"
+LOCAL_UNBOUND_CONF_SRC="$SCRIPT_DIR/unbound.conf"
 
-# --- Clean up previous unbound config to prevent errors ---
-echo "Removing potentially corrupt Unbound config..."
-rm -f "$MAILU_DATA_PATH/unbound/unbound.conf"
+echo "Setting up data directories in $MAILU_DATA_PATH..."
+mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
+mkdir -p "$UNBOUND_DATA_PATH"
+
+# --- Copy the local Unbound config file to the data directory ---
+echo "Looking for local unbound.conf..."
+if [ ! -f "$LOCAL_UNBOUND_CONF_SRC" ]; then
+    echo "❌ ERROR: unbound.conf not found at $LOCAL_UNBOUND_CONF_SRC"
+    echo "   Please create it in the same directory as deploy.sh before running."
+    exit 1
+fi
+
+echo "Copying local unbound.conf to data directory..."
+cp "$LOCAL_UNBOUND_CONF_SRC" "$UNBOUND_CONF_DEST_PATH"
+
 
 # --- Service Deployment ---
 remove_container() {
@@ -53,7 +66,6 @@ remove_container "$WEBMAIL_CONTAINER"
 remove_container "$RESOLVER_CONTAINER"
 
 # --- Recreate the Network ---
-# This is now done AFTER removing the containers to avoid errors.
 echo "Recreating Docker network '$MAILU_NETWORK' to ensure correct subnet..."
 docker network rm "$MAILU_NETWORK" 2>/dev/null || true
 docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
@@ -75,7 +87,8 @@ docker run -d \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --ip="$RESOLVER_ADDRESS" \
-  -v "$MAILU_DATA_PATH/unbound:/etc/unbound" \
+  -v "$UNBOUND_CONF_DEST_PATH:/etc/unbound/unbound.conf:ro" \
+  -v "$UNBOUND_DATA_PATH:/etc/unbound" \
   "$DOCKER_ORG/unbound:$MAILU_VERSION"
 
 # Redis Container
@@ -86,17 +99,16 @@ docker run -d \
   redis:alpine
 
 # --- Health Checks ---
-# Wait for core services to be ready before starting dependent services.
-
 echo "Waiting for Unbound DNS resolver to be ready..."
-until docker exec "$RESOLVER_CONTAINER" dig @127.0.0.1 google.com +short | grep -q '[0-9]'; do
+# We unset LD_PRELOAD here to avoid the harmless error inside the container
+until LD_PRELOAD="" docker exec "$RESOLVER_CONTAINER" dig @127.0.0.1 google.com +short | grep -q '[0-9]'; do
   echo "  - Unbound not ready yet, waiting 2 seconds..."
   sleep 2
 done
 echo "✔️ Unbound is ready."
 
 echo "Waiting for Redis to be ready..."
-until docker exec "$REDIS_CONTAINER" redis-cli ping | grep -q "PONG"; do
+until LD_PRELOAD="" docker exec "$REDIS_CONTAINER" redis-cli ping | grep -q "PONG"; do
   echo "  - Redis not ready yet, waiting 2 seconds..."
   sleep 2
 done
