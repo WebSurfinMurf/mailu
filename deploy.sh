@@ -32,7 +32,7 @@ set +o allexport
 # --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 echo "Setting up network and directories in $MAILU_DATA_PATH..."
-# --- CORRECTED: Force network recreation to ensure subnet is set ---
+# --- RECREATE THE NETWORK TO ENSURE SUBNET IS SET ---
 echo "Recreating Docker network '$MAILU_NETWORK' to ensure correct subnet..."
 docker network rm "$MAILU_NETWORK" 2>/dev/null || true
 docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
