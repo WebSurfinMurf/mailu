@@ -60,11 +60,6 @@ curl -s -o "$ROOT_HINTS_DEST_PATH" https://www.internic.net/domain/named.root
 echo "Ensuring trusted-key.key file exists..."
 touch "$TRUSTED_KEY_DEST_PATH"
 
-# --- Set correct permissions for the Unbound data directory ---
-# The user 'unbound' inside the container (UID 993, GID 990) needs to own these files.
-echo "Setting correct ownership for Unbound data files..."
-sudo chown -R 993:990 "$UNBOUND_DATA_PATH"
-
 
 # --- Service Deployment ---
 remove_container() {
