@@ -33,6 +33,7 @@ set +o allexport
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 UNBOUND_DATA_PATH="$MAILU_DATA_PATH/unbound"
 UNBOUND_CONF_DEST_PATH="$UNBOUND_DATA_PATH/unbound.conf"
+ROOT_HINTS_DEST_PATH="$UNBOUND_DATA_PATH/root.hints"
 LOCAL_UNBOUND_CONF_SRC="$SCRIPT_DIR/unbound.conf"
 
 echo "Setting up data directories in $MAILU_DATA_PATH..."
@@ -49,6 +50,10 @@ fi
 
 echo "Copying local unbound.conf to data directory..."
 cp "$LOCAL_UNBOUND_CONF_SRC" "$UNBOUND_CONF_DEST_PATH"
+
+# --- Download root.hints file to ensure it's available ---
+echo "Downloading latest root.hints file..."
+curl -s -o "$ROOT_HINTS_DEST_PATH" https://www.internic.net/domain/named.root
 
 
 # --- Service Deployment ---
