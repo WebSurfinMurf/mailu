@@ -34,7 +34,6 @@ MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 UNBOUND_DATA_PATH="$MAILU_DATA_PATH/unbound"
 UNBOUND_CONF_DEST_PATH="$UNBOUND_DATA_PATH/unbound.conf"
 ROOT_HINTS_DEST_PATH="$UNBOUND_DATA_PATH/root.hints"
-TRUSTED_KEY_DEST_PATH="$UNBOUND_DATA_PATH/trusted-key.key"
 LOCAL_UNBOUND_CONF_SRC="$SCRIPT_DIR/unbound.conf"
 
 echo "Setting up data directories in $MAILU_DATA_PATH..."
@@ -50,11 +49,16 @@ if [ ! -f "$LOCAL_UNBOUND_CONF_SRC" ]; then
 fi
 
 echo "Copying local unbound.conf to data directory..."
+# We remove the old file first to ensure a clean state
+rm -f "$UNBOUND_CONF_DEST_PATH"
 cp "$LOCAL_UNBOUND_CONF_SRC" "$UNBOUND_CONF_DEST_PATH"
 
 # --- Download root.hints file to ensure it's available ---
 echo "Downloading latest root.hints file..."
+# We remove the old file first to ensure a clean state
+rm -f "$ROOT_HINTS_DEST_PATH"
 curl -s -o "$ROOT_HINTS_DEST_PATH" https://www.internic.net/domain/named.root
+
 
 # --- Service Deployment ---
 remove_container() {
@@ -103,6 +107,12 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   redis:alpine
 
+# --- Initialize DNSSEC Trust Anchor ---
+echo "Waiting for Unbound container to be created before initializing trust anchor..."
+sleep 5 # Give the container a moment to initialize
+echo "Initializing DNSSEC trust anchor using unbound-anchor..."
+docker exec "$RESOLVER_CONTAINER" unbound-anchor -a /etc/unbound/trusted-key.key
+
 # --- Health Checks ---
 echo "Waiting for Unbound DNS resolver to be ready..."
 # We unset LD_PRELOAD here to avoid the harmless error inside the container
@@ -113,7 +123,7 @@ done
 echo "✔️ Unbound is ready."
 
 echo "Waiting for Redis to be ready..."
-until LD_PRELOAD="" docker exec "$RESOLVER_CONTAINER" redis-cli ping | grep -q "PONG"; do
+until LD_PRELOAD="" docker exec "$REDIS_CONTAINER" redis-cli ping | grep -q "PONG"; do
   echo "  - Redis not ready yet, waiting 2 seconds..."
   sleep 2
 done
