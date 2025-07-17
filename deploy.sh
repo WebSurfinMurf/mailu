@@ -16,6 +16,8 @@ if [ ! -d "$SCRIPT_DIR" ]; then
 fi
 
 cd "$SCRIPT_DIR"
+# This assumes your mailu.env file is in a 'secrets' directory one level up.
+# Adjust the path if your structure is different.
 ENV_FILE="../secrets/mailu.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -39,11 +41,11 @@ echo "Setting up data directories in $MAILU_DATA_PATH..."
 mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
 mkdir -p "$UNBOUND_DATA_PATH"
 
-# --- Copy the local Unbound config file to the data directory ---
-echo "Looking for local unbound.conf..."
+# --- Use the unbound.conf from the local Git repository ---
+echo "Looking for local unbound.conf to copy..."
 if [ ! -f "$LOCAL_UNBOUND_CONF_SRC" ]; then
     echo "❌ ERROR: unbound.conf not found at $LOCAL_UNBOUND_CONF_SRC"
-    echo "   Please create it in the same directory as deploy.sh before running."
+    echo "   Please ensure it exists in the same directory as deploy.sh."
     exit 1
 fi
 
