@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script (Final Verified Version with Static IP Resolver)
+# Mailu Deployment Script - Improved Version with Bug Fixes
 # ======================================================================
-# Deploys Mailu with a static IP for the unbound DNS resolver to solve
-# the DNSSEC validation issue permanently and reliably.
 
-# --- Setup and Pre-flight Checks ---
 set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
@@ -18,8 +15,28 @@ fi
 cd "$SCRIPT_DIR"
 ENV_FILE="../secrets/mailu.env"
 
+# --- Pre-flight Checks ---
+echo "=== Pre-flight Checks ==="
+
+# Check if running as root (not recommended for Docker)
+if [[ $EUID -eq 0 ]]; then
+   echo "⚠️  WARNING: Running as root. Consider using a non-root user with docker group membership."
+fi
+
+# Check Docker availability
+if ! command -v docker &> /dev/null; then
+    echo "❌ ERROR: Docker is not installed or not in PATH"
+    exit 1
+fi
+
+# Check if Docker daemon is running
+if ! docker info &> /dev/null; then
+    echo "❌ ERROR: Docker daemon is not running or user lacks permissions"
+    exit 1
+fi
+
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Error: Environment file not found at $ENV_FILE" >&2
+  echo "❌ ERROR: Environment file not found at $ENV_FILE" >&2
   exit 1
 fi
 
@@ -29,6 +46,32 @@ set -o allexport
 source "$ENV_FILE"
 set +o allexport
 
+# --- Validate Critical Environment Variables ---
+echo "=== Validating Environment Variables ==="
+
+if [[ ${#SECRET_KEY} -ne 32 ]]; then
+    echo "❌ ERROR: SECRET_KEY must be exactly 32 characters long (current: ${#SECRET_KEY})"
+    echo "   Generate a new one with: openssl rand -hex 16"
+    exit 1
+fi
+
+if [[ -z "${DOMAIN:-}" ]]; then
+    echo "❌ ERROR: DOMAIN is required"
+    exit 1
+fi
+
+if [[ -z "${HOSTNAMES:-}" ]]; then
+    echo "❌ ERROR: HOSTNAMES is required"
+    exit 1
+fi
+
+if [[ -z "${POSTMASTER:-}" ]]; then
+    echo "❌ ERROR: POSTMASTER is required"
+    exit 1
+fi
+
+echo "✔️ Environment validation passed"
+
 # --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 UNBOUND_DATA_PATH="$MAILU_DATA_PATH/unbound"
@@ -36,12 +79,23 @@ UNBOUND_CONF_DEST_PATH="$UNBOUND_DATA_PATH/unbound.conf"
 ROOT_HINTS_DEST_PATH="$UNBOUND_DATA_PATH/root.hints"
 LOCAL_UNBOUND_CONF_SRC="$SCRIPT_DIR/unbound.conf"
 
-echo "Setting up data directories in $MAILU_DATA_PATH..."
+echo "=== Setting up data directories ==="
+echo "Data path: $MAILU_DATA_PATH"
+
+# Create directories with proper permissions
 mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
 mkdir -p "$UNBOUND_DATA_PATH"
 
-# --- Use the unbound.conf from the local Git repository ---
-echo "Looking for local unbound.conf to copy..."
+# Set proper ownership for mail directories (Mailu uses UID 1000)
+if [[ -d "$MAILU_DATA_PATH/mail" ]]; then
+    sudo chown -R 1000:1000 "$MAILU_DATA_PATH/mail" 2>/dev/null || {
+        echo "⚠️  WARNING: Could not set ownership on mail directory. Run as root if needed."
+    }
+fi
+
+# --- Setup Unbound Configuration ---
+echo "=== Setting up Unbound DNS resolver ==="
+
 if [ ! -f "$LOCAL_UNBOUND_CONF_SRC" ]; then
     echo "❌ ERROR: unbound.conf not found at $LOCAL_UNBOUND_CONF_SRC"
     echo "   Please ensure it exists in the same directory as deploy.sh."
@@ -49,23 +103,29 @@ if [ ! -f "$LOCAL_UNBOUND_CONF_SRC" ]; then
 fi
 
 echo "Copying local unbound.conf to data directory..."
-# We remove the old file first to ensure a clean state
 rm -f "$UNBOUND_CONF_DEST_PATH"
 cp "$LOCAL_UNBOUND_CONF_SRC" "$UNBOUND_CONF_DEST_PATH"
 
-# --- Download root.hints file to ensure it's available ---
 echo "Downloading latest root.hints file..."
-# We remove the old file first to ensure a clean state
 rm -f "$ROOT_HINTS_DEST_PATH"
-curl -s -o "$ROOT_HINTS_DEST_PATH" https://www.internic.net/domain/named.root
+if ! curl -s -f -o "$ROOT_HINTS_DEST_PATH" https://www.internic.net/domain/named.root; then
+    echo "❌ ERROR: Failed to download root.hints file"
+    exit 1
+fi
 
+echo "✔️ Unbound configuration ready"
 
-# --- Service Deployment ---
+# --- Container Management Functions ---
 remove_container() {
-  docker rm -f "$1" 2>/dev/null || true
+    local container_name="$1"
+    if docker ps -a --format '{{.Names}}' | grep -q "^${container_name}$"; then
+        echo "  Removing container: $container_name"
+        docker rm -f "$container_name" 2>/dev/null || true
+    fi
 }
 
-echo "Removing all existing Mailu containers..."
+# --- Clean up existing deployment ---
+echo "=== Cleaning up existing containers ==="
 remove_container "$REDIS_CONTAINER"
 remove_container "$FRONT_CONTAINER"
 remove_container "$ADMIN_CONTAINER"
@@ -74,83 +134,167 @@ remove_container "$SMTP_CONTAINER"
 remove_container "$WEBMAIL_CONTAINER"
 remove_container "$RESOLVER_CONTAINER"
 
-# --- Recreate the Network ---
-echo "Recreating Docker network '$MAILU_NETWORK' to ensure correct subnet..."
+# --- Network Management ---
+echo "=== Setting up Docker networks ==="
+
+# Check if Traefik network exists
+if ! docker network ls --format '{{.Name}}' | grep -q "^${TRAEFIK_NETWORK}$"; then
+    echo "❌ ERROR: Traefik network '$TRAEFIK_NETWORK' does not exist"
+    echo "   Please create it first or start Traefik"
+    exit 1
+fi
+
+echo "Recreating Docker network '$MAILU_NETWORK' with subnet $SUBNET..."
 docker network rm "$MAILU_NETWORK" 2>/dev/null || true
 docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
 
-echo "Pulling latest images..."
-docker pull redis:alpine
-docker pull "$DOCKER_ORG/unbound:$MAILU_VERSION"
-docker pull "$DOCKER_ORG/nginx:$MAILU_VERSION"
-docker pull "$DOCKER_ORG/admin:$MAILU_VERSION"
-docker pull "$DOCKER_ORG/dovecot:$MAILU_VERSION"
-docker pull "$DOCKER_ORG/postfix:$MAILU_VERSION"
-docker pull "$DOCKER_ORG/webmail:$MAILU_VERSION"
+# --- Pull Images ---
+echo "=== Pulling latest Docker images ==="
+images=(
+    "redis:alpine"
+    "$DOCKER_ORG/unbound:$MAILU_VERSION"
+    "$DOCKER_ORG/nginx:$MAILU_VERSION"
+    "$DOCKER_ORG/admin:$MAILU_VERSION"
+    "$DOCKER_ORG/dovecot:$MAILU_VERSION"
+    "$DOCKER_ORG/postfix:$MAILU_VERSION"
+    "$DOCKER_ORG/webmail:$MAILU_VERSION"
+)
 
-echo "Deploying core services..."
+for image in "${images[@]}"; do
+    echo "  Pulling $image..."
+    if ! docker pull "$image"; then
+        echo "❌ ERROR: Failed to pull image $image"
+        exit 1
+    fi
+done
 
-# DNS Resolver (Unbound) with a Static IP
+echo "✔️ All images pulled successfully"
+
+# --- Deploy Core Services ---
+echo "=== Deploying core services ==="
+
+# DNS Resolver (Unbound) with Static IP
+echo "  Starting DNS resolver container..."
 docker run -d \
   --name "$RESOLVER_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --ip="$RESOLVER_ADDRESS" \
   --env-file="$ENV_FILE" \
-  -v "$UNBOUND_DATA_PATH:/etc/unbound" \
+  -v "$UNBOUND_DATA_PATH:/etc/unbound:ro" \
   "$DOCKER_ORG/unbound:$MAILU_VERSION"
 
 # Redis Container
+echo "  Starting Redis container..."
 docker run -d \
   --name "$REDIS_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
+  --hostname="$REDIS_HOST" \
   redis:alpine
 
-# --- Initialize DNSSEC Trust Anchor ---
-echo "Waiting for Unbound container to be created before initializing trust anchor..."
-sleep 5 # Give the container a moment to initialize
-echo "Initializing DNSSEC trust anchor using unbound-anchor..."
-docker exec "$RESOLVER_CONTAINER" unbound-anchor -a /etc/unbound/trusted-key.key
+# Wait for core services to be ready
+echo "=== Waiting for core services to be ready ==="
 
-# --- Health Checks ---
-echo "Waiting for Unbound DNS resolver to be ready..."
-# We unset LD_PRELOAD here to avoid the harmless error inside the container
-until LD_PRELOAD="" docker exec "$RESOLVER_CONTAINER" dig @127.0.0.1 google.com +short | grep -q '[0-9]'; do
-  echo "  - Unbound not ready yet, waiting 2 seconds..."
-  sleep 2
+echo "Initializing DNSSEC trust anchor..."
+sleep 5
+if ! docker exec "$RESOLVER_CONTAINER" unbound-anchor -a /etc/unbound/trusted-key.key 2>/dev/null; then
+    echo "⚠️  WARNING: DNSSEC trust anchor initialization failed, continuing..."
+fi
+
+echo "Waiting for Unbound DNS resolver..."
+timeout=60
+counter=0
+until docker exec "$RESOLVER_CONTAINER" dig @127.0.0.1 google.com +short 2>/dev/null | grep -q '[0-9]'; do
+    if [[ $counter -ge $timeout ]]; then
+        echo "❌ ERROR: Unbound failed to start within $timeout seconds"
+        echo "Container logs:"
+        docker logs "$RESOLVER_CONTAINER" --tail 20
+        exit 1
+    fi
+    echo "  - Waiting for Unbound... ($counter/$timeout)"
+    sleep 2
+    ((counter++))
 done
-echo "✔️ Unbound is ready."
+echo "✔️ Unbound is ready"
 
-echo "Waiting for Redis to be ready..."
-until LD_PRELOAD="" docker exec "$REDIS_CONTAINER" redis-cli ping | grep -q "PONG"; do
-  echo "  - Redis not ready yet, waiting 2 seconds..."
-  sleep 2
+echo "Waiting for Redis..."
+counter=0
+until docker exec "$REDIS_CONTAINER" redis-cli ping 2>/dev/null | grep -q "PONG"; do
+    if [[ $counter -ge $timeout ]]; then
+        echo "❌ ERROR: Redis failed to start within $timeout seconds"
+        docker logs "$REDIS_CONTAINER" --tail 20
+        exit 1
+    fi
+    echo "  - Waiting for Redis... ($counter/$timeout)"
+    sleep 2
+    ((counter++))
 done
-echo "✔️ Redis is ready."
+echo "✔️ Redis is ready"
 
+# --- Deploy Application Services ---
+echo "=== Deploying application services ==="
 
-echo "Deploying remaining Mailu services..."
-
-# Admin Container (Points to the Unbound resolver's static IP)
+# Admin Container
+echo "  Starting Admin container..."
 docker run -d \
   --name "$ADMIN_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
   --dns="$RESOLVER_ADDRESS" \
   --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/data":/data \
-  -v "$MAILU_DATA_PATH/dkim":/dkim \
+  --hostname="admin" \
+  -v "$MAILU_DATA_PATH/data:/data" \
+  -v "$MAILU_DATA_PATH/dkim:/dkim" \
   "$DOCKER_ORG/admin:$MAILU_VERSION"
 
-# Front Container (The main entrypoint for Traefik)
+# IMAP Container
+echo "  Starting IMAP container..."
+docker run -d \
+  --name "$IMAP_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --dns="$RESOLVER_ADDRESS" \
+  --env-file="$ENV_FILE" \
+  --hostname="imap" \
+  -v "$MAILU_DATA_PATH/mail:/mail" \
+  -v "$MAILU_DATA_PATH/overrides/dovecot:/overrides:ro" \
+  "$DOCKER_ORG/dovecot:$MAILU_VERSION"
+
+# SMTP Container
+echo "  Starting SMTP container..."
+docker run -d \
+  --name "$SMTP_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --dns="$RESOLVER_ADDRESS" \
+  --env-file="$ENV_FILE" \
+  --hostname="smtp" \
+  -v "$MAILU_DATA_PATH/mailqueue:/queue" \
+  -v "$MAILU_DATA_PATH/overrides/postfix:/overrides:ro" \
+  "$DOCKER_ORG/postfix:$MAILU_VERSION"
+
+# Webmail Container
+echo "  Starting Webmail container..."
+docker run -d \
+  --name "$WEBMAIL_CONTAINER" \
+  --restart=always \
+  --network="$MAILU_NETWORK" \
+  --dns="$RESOLVER_ADDRESS" \
+  --env-file="$ENV_FILE" \
+  --hostname="webmail" \
+  -v "$MAILU_DATA_PATH/webmail:/data" \
+  "$DOCKER_ORG/webmail:$MAILU_VERSION"
+
+# Front Container (Last - connects to both networks)
+echo "  Starting Front/Nginx container..."
 docker run -d \
   --name "$FRONT_CONTAINER" \
   --restart=always \
   --network="$MAILU_NETWORK" \
-  --network="$TRAEFIK_NETWORK" \
   --dns="$RESOLVER_ADDRESS" \
   --env-file="$ENV_FILE" \
+  --hostname="$FRONT_ADDRESS" \
   -v "$MAILU_DATA_PATH/overrides/nginx:/overrides:ro" \
   -v "/home/websurfinmurf/projects/traefik/certs/ai-servicers.com:/certs:ro" \
   -l "traefik.enable=true" \
@@ -161,10 +305,10 @@ docker run -d \
   -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-https.entrypoints=websecure" \
   -l "traefik.http.routers.mailu-https.service=mailu-service" \
-  --label "traefik.http.routers.mailu-https.tls=true" \
-  --label "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
-  --label "traefik.http.routers.mailu-https.tls.domains[0].main=ai-servicers.com" \
-  --label "traefik.http.routers.mailu-https.tls.domains[0].sans=*.ai-servicers.com" \
+  -l "traefik.http.routers.mailu-https.tls=true" \
+  -l "traefik.http.routers.mailu-https.tls.certresolver=letsencrypt" \
+  -l "traefik.http.routers.mailu-https.tls.domains[0].main=ai-servicers.com" \
+  -l "traefik.http.routers.mailu-https.tls.domains[0].sans=*.ai-servicers.com" \
   -l "traefik.http.services.mailu-service.loadbalancer.server.port=80" \
   -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
@@ -186,39 +330,43 @@ docker run -d \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
 
-# IMAP Container
-docker run -d \
-  --name "$IMAP_CONTAINER" \
-  --restart=always \
-  --network="$MAILU_NETWORK" \
-  --dns="$RESOLVER_ADDRESS" \
-  --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/mail:/mail" \
-  -v "$MAILU_DATA_PATH/overrides/dovecot:/overrides:ro" \
-  "$DOCKER_ORG/dovecot:$MAILU_VERSION"
+# Connect front container to Traefik network
+echo "  Connecting Front container to Traefik network..."
+docker network connect "$TRAEFIK_NETWORK" "$FRONT_CONTAINER"
 
-# SMTP Container
-docker run -d \
-  --name "$SMTP_CONTAINER" \
-  --restart=always \
-  --network="$MAILU_NETWORK" \
-  --dns="$RESOLVER_ADDRESS" \
-  --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/mailqueue:/queue" \
-  -v "$MAILU_DATA_PATH/overrides/postfix:/overrides:ro" \
-  "$DOCKER_ORG/postfix:$MAILU_VERSION"
+# --- Final Health Checks ---
+echo "=== Final health checks ==="
 
-# Webmail Container
-docker run -d \
-  --name "$WEBMAIL_CONTAINER" \
-  --restart=always \
-  --network="$MAILU_NETWORK" \
-  --dns="$RESOLVER_ADDRESS" \
-  --env-file="$ENV_FILE" \
-  -v "$MAILU_DATA_PATH/webmail:/data" \
-  "$DOCKER_ORG/webmail:$MAILU_VERSION"
+sleep 10  # Give containers time to initialize
 
-echo
-echo "✔️ Mailu deployment is complete!"
-echo "   All services started using individual 'docker run' commands."
-echo "   Access via https://${HOSTNAMES%%,*}"
+failed_containers=()
+for container in "$REDIS_CONTAINER" "$RESOLVER_CONTAINER" "$ADMIN_CONTAINER" "$IMAP_CONTAINER" "$SMTP_CONTAINER" "$WEBMAIL_CONTAINER" "$FRONT_CONTAINER"; do
+    if ! docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
+        failed_containers+=("$container")
+    fi
+done
+
+if [[ ${#failed_containers[@]} -gt 0 ]]; then
+    echo "❌ ERROR: The following containers failed to start:"
+    printf '   - %s\n' "${failed_containers[@]}"
+    echo ""
+    echo "Check container logs with:"
+    printf '   docker logs %s\n' "${failed_containers[@]}"
+    exit 1
+fi
+
+echo ""
+echo "🎉 SUCCESS! Mailu deployment completed successfully!"
+echo ""
+echo "📍 Access points:"
+echo "   • Admin interface: https://${HOSTNAMES%%,*}/admin"
+echo "   • Webmail: https://${HOSTNAMES%%,*}/webmail"
+echo ""
+echo "📊 Container status:"
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' --filter "name=mailu-"
+echo ""
+echo "🔧 Useful commands:"
+echo "   • View logs: docker logs <container-name>"
+echo "   • Check status: docker ps --filter name=mailu-"
+echo "   • Stop all: docker stop \$(docker ps -q --filter name=mailu-)"
+echo "   • Remove all: docker rm \$(docker ps -aq --filter name=mailu-)"
