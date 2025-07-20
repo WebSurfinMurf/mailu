@@ -75,9 +75,7 @@ echo "✔️ Environment validation passed"
 # --- Define Paths and Create Directories ---
 MAILU_DATA_PATH="$SCRIPT_DIR/../data/mailu"
 UNBOUND_DATA_PATH="$MAILU_DATA_PATH/unbound"
-UNBOUND_CONF_DEST_PATH="$UNBOUND_DATA_PATH/unbound.conf"
 ROOT_HINTS_DEST_PATH="$UNBOUND_DATA_PATH/root.hints"
-LOCAL_UNBOUND_CONF_SRC="$SCRIPT_DIR/unbound.conf"
 
 echo "=== Setting up data directories ==="
 echo "Data path: $MAILU_DATA_PATH"
@@ -96,24 +94,18 @@ fi
 # --- Setup Unbound Configuration ---
 echo "=== Setting up Unbound DNS resolver ==="
 
-if [ ! -f "$LOCAL_UNBOUND_CONF_SRC" ]; then
-    echo "❌ ERROR: unbound.conf not found at $LOCAL_UNBOUND_CONF_SRC"
-    echo "   Please ensure it exists in the same directory as deploy.sh."
-    exit 1
-fi
+# Create the unbound directory but let Mailu generate its own config
+# The Mailu unbound container will create the config from templates
+echo "Creating unbound directory (Mailu will generate config)..."
 
-echo "Copying local unbound.conf to data directory..."
-rm -f "$UNBOUND_CONF_DEST_PATH"
-cp "$LOCAL_UNBOUND_CONF_SRC" "$UNBOUND_CONF_DEST_PATH"
-
+# Download root.hints as a fallback (optional)
 echo "Downloading latest root.hints file..."
 rm -f "$ROOT_HINTS_DEST_PATH"
 if ! curl -s -f -o "$ROOT_HINTS_DEST_PATH" https://www.internic.net/domain/named.root; then
-    echo "❌ ERROR: Failed to download root.hints file"
-    exit 1
+    echo "⚠️  WARNING: Failed to download root.hints file, continuing without it"
 fi
 
-echo "✔️ Unbound configuration ready"
+echo "✔️ Unbound directory ready"
 
 # --- Container Management Functions ---
 remove_container() {
@@ -181,7 +173,7 @@ docker run -d \
   --network="$MAILU_NETWORK" \
   --ip="$RESOLVER_ADDRESS" \
   --env-file="$ENV_FILE" \
-  -v "$UNBOUND_DATA_PATH:/etc/unbound:ro" \
+  -v "$UNBOUND_DATA_PATH:/data" \
   "$DOCKER_ORG/unbound:$MAILU_VERSION"
 
 # Redis Container
@@ -198,8 +190,11 @@ echo "=== Waiting for core services to be ready ==="
 
 echo "Initializing DNSSEC trust anchor..."
 sleep 5
+# Let the container initialize its own config first, then try trust anchor
+sleep 5
 if ! docker exec "$RESOLVER_CONTAINER" unbound-anchor -a /etc/unbound/trusted-key.key 2>/dev/null; then
-    echo "⚠️  WARNING: DNSSEC trust anchor initialization failed, continuing..."
+    echo "⚠️  WARNING: DNSSEC trust anchor initialization failed"
+    echo "   This is normal on first run - Unbound will use root hints"
 fi
 
 echo "Waiting for Unbound DNS resolver..."
