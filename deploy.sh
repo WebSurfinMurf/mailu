@@ -152,6 +152,7 @@ remove_container "$IMAP_CONTAINER"
 remove_container "$SMTP_CONTAINER"
 remove_container "$WEBMAIL_CONTAINER"
 remove_container "$RESOLVER_CONTAINER"
+remove_container "mailu-forward-auth"
 
 # --- Network Management ---
 echo "=== Setting up Docker networks ==="
@@ -163,12 +164,13 @@ if ! docker network ls --format '{{.Name}}' | grep -q "^${TRAEFIK_NETWORK}$"; th
     exit 1
 fi
 
-# Check if auth service is running
-echo "=== Checking authentication service ==="
-if ! docker ps --format '{{.Names}}' | grep -q "keycloak-forward-auth"; then
-    echo "⚠️  WARNING: Keycloak forward auth service not found"
-    echo "   Please deploy the forward auth service first"
-    echo "   Run: docker-compose -f keycloak-auth-middleware.yml up -d"
+# Check if forward auth secrets exist
+echo "=== Checking forward auth configuration ==="
+FORWARD_AUTH_ENV="../secrets/forward-auth.env"
+if [[ ! -f "$FORWARD_AUTH_ENV" ]]; then
+    echo "⚠️  WARNING: Forward auth configuration not found at $FORWARD_AUTH_ENV"
+    echo "   Please run the Keycloak client setup first:"
+    echo "   cd ../keycloak && ./setup-client.sh"
 fi
 
 echo "Recreating Docker network '$MAILU_NETWORK' with subnet $SUBNET..."
@@ -179,6 +181,7 @@ docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
 echo "=== Pulling latest Docker images ==="
 images=(
     "redis:alpine"
+    "thomseddon/traefik-forward-auth:2"
     "$DOCKER_ORG/unbound:$MAILU_VERSION"
     "$DOCKER_ORG/nginx:$MAILU_VERSION"
     "$DOCKER_ORG/admin:$MAILU_VERSION"
@@ -261,6 +264,65 @@ until docker exec "$REDIS_CONTAINER" redis-cli ping 2>/dev/null | grep -q "PONG"
     ((counter++))
 done
 echo "✔️ Redis is ready"
+
+# --- Deploy Forward Auth Service ---
+echo "=== Deploying forward authentication service ==="
+
+# Load forward auth environment if it exists
+if [[ -f "$FORWARD_AUTH_ENV" ]]; then
+    echo "Loading forward auth configuration..."
+    source "$FORWARD_AUTH_ENV"
+    
+    echo "  Starting Forward Auth container..."
+    docker run -d \
+      --name "mailu-forward-auth" \
+      --restart=always \
+      --network="$TRAEFIK_NETWORK" \
+      --hostname="auth" \
+      -e PROVIDERS_OIDC_ISSUER_URL="${PROVIDERS_OIDC_ISSUER_URL}" \
+      -e PROVIDERS_OIDC_CLIENT_ID="${PROVIDERS_OIDC_CLIENT_ID}" \
+      -e PROVIDERS_OIDC_CLIENT_SECRET="${PROVIDERS_OIDC_CLIENT_SECRET}" \
+      -e SECRET="${SECRET}" \
+      -e AUTH_HOST="${AUTH_HOST}" \
+      -e COOKIE_DOMAIN="${COOKIE_DOMAIN}" \
+      -e HEADERS_USERNAME="${HEADERS_USERNAME}" \
+      -e HEADERS_GROUPS="${HEADERS_GROUPS:-X-Auth-Groups}" \
+      -e HEADERS_NAME="${HEADERS_NAME:-X-Auth-Name}" \
+      -e URL_PATH="${URL_PATH}" \
+      -e LOGOUT_REDIRECT="${LOGOUT_REDIRECT}" \
+      -e LIFETIME="${LIFETIME}" \
+      -e LOG_LEVEL="${LOG_LEVEL}" \
+      -l "traefik.enable=true" \
+      -l "traefik.docker.network=$TRAEFIK_NETWORK" \
+      -l "traefik.http.routers.auth.rule=Host(\`${AUTH_HOST}\`)" \
+      -l "traefik.http.routers.auth.entrypoints=websecure" \
+      -l "traefik.http.routers.auth.tls=true" \
+      -l "traefik.http.routers.auth.tls.certresolver=letsencrypt" \
+      -l "traefik.http.routers.auth.service=auth-service" \
+      -l "traefik.http.services.auth-service.loadbalancer.server.port=4181" \
+      -l "traefik.http.middlewares.mailu-auth.forwardauth.address=http://mailu-forward-auth:4181" \
+      -l "traefik.http.middlewares.mailu-auth.forwardauth.trustForwardHeader=true" \
+      -l "traefik.http.middlewares.mailu-auth.forwardauth.authResponseHeaders=X-Auth-Email,X-Auth-Groups,X-Auth-Name" \
+      thomseddon/traefik-forward-auth:2
+    
+    # Wait for forward auth to be ready
+    echo "Waiting for forward auth service..."
+    timeout=30
+    counter=0
+    until curl -f -s "http://localhost:4181/_oauth" >/dev/null 2>&1 || docker logs mailu-forward-auth 2>&1 | grep -q "listening"; do
+        if [[ $counter -ge $timeout ]]; then
+            echo "⚠️  WARNING: Forward auth may not be ready, continuing anyway"
+            break
+        fi
+        echo "  - Waiting for forward auth... ($counter/$timeout)"
+        sleep 2
+        ((counter++))
+    done
+    echo "✔️ Forward auth service ready"
+else
+    echo "⚠️  Skipping forward auth deployment - configuration not found"
+    echo "   Authentication will use local Mailu accounts only"
+fi
 
 # --- Deploy Application Services ---
 echo "=== Deploying application services ==="
@@ -345,7 +407,7 @@ docker run -d \
   \
   -l "traefik.http.routers.mailu-admin-auth.rule=Host(\`${HOSTNAMES}\`) && PathPrefix(\`/admin\`)" \
   -l "traefik.http.routers.mailu-admin-auth.entrypoints=websecure" \
-  -l "traefik.http.routers.mailu-admin-auth.middlewares=keycloak-auth@docker" \
+  -l "traefik.http.routers.mailu-admin-auth.middlewares=mailu-auth@docker" \
   -l "traefik.http.routers.mailu-admin-auth.service=mailu-service" \
   -l "traefik.http.routers.mailu-admin-auth.tls=true" \
   -l "traefik.http.routers.mailu-admin-auth.tls.certresolver=letsencrypt" \
@@ -353,7 +415,7 @@ docker run -d \
   \
   -l "traefik.http.routers.mailu-webmail-auth.rule=Host(\`${HOSTNAMES}\`) && PathPrefix(\`/webmail\`)" \
   -l "traefik.http.routers.mailu-webmail-auth.entrypoints=websecure" \
-  -l "traefik.http.routers.mailu-webmail-auth.middlewares=keycloak-auth@docker" \
+  -l "traefik.http.routers.mailu-webmail-auth.middlewares=mailu-auth@docker" \
   -l "traefik.http.routers.mailu-webmail-auth.service=mailu-service" \
   -l "traefik.http.routers.mailu-webmail-auth.tls=true" \
   -l "traefik.http.routers.mailu-webmail-auth.tls.certresolver=letsencrypt" \
@@ -395,6 +457,11 @@ for container in "$REDIS_CONTAINER" "$RESOLVER_CONTAINER" "$ADMIN_CONTAINER" "$I
     fi
 done
 
+# Check forward auth separately (optional)
+if [[ -f "$FORWARD_AUTH_ENV" ]] && ! docker ps --format '{{.Names}}' | grep -q "^mailu-forward-auth$"; then
+    echo "⚠️  WARNING: Forward auth container not running - authentication may not work"
+fi
+
 if [[ ${#failed_containers[@]} -gt 0 ]]; then
     echo "❌ ERROR: The following containers failed to start:"
     printf '   - %s\n' "${failed_containers[@]}"
@@ -408,23 +475,40 @@ echo ""
 echo "🎉 SUCCESS! Mailu deployment with proxy authentication completed!"
 echo ""
 echo "📍 Access points:"
-echo "   • Admin interface: https://${HOSTNAMES%%,*}/admin (requires Keycloak login)"
-echo "   • Webmail: https://${HOSTNAMES%%,*}/webmail (requires Keycloak login)"
+if [[ -f "$FORWARD_AUTH_ENV" ]]; then
+    echo "   • Admin interface: https://${HOSTNAMES%%,*}/admin (requires Keycloak login)"
+    echo "   • Webmail: https://${HOSTNAMES%%,*}/webmail (requires Keycloak login)"
+    echo "   • Auth service: https://auth.ai-servicers.com/_oauth"
+else
+    echo "   • Admin interface: https://${HOSTNAMES%%,*}/admin (local authentication)"
+    echo "   • Webmail: https://${HOSTNAMES%%,*}/webmail (local authentication)"
+fi
 echo "   • Public webmail: https://${HOSTNAMES%%,*}/ (no auth required)"
 echo ""
-echo "🔐 Authentication:"
-echo "   • Admin/Webmail access requires Keycloak authentication"
-echo "   • Users will be redirected to: https://keycloak.ai-servicers.com"
-echo "   • After login, users are created automatically in Mailu"
-echo ""
+if [[ -f "$FORWARD_AUTH_ENV" ]]; then
+    echo "🔐 Authentication:"
+    echo "   • Admin/Webmail access requires Keycloak authentication"
+    echo "   • Users will be redirected to: https://keycloak.ai-servicers.com"
+    echo "   • After login, users are created automatically in Mailu"
+    echo ""
+fi
 echo "📊 Container status:"
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' --filter "name=mailu-"
 echo ""
 echo "🔧 Next steps:"
-echo "   1. Deploy the forward auth service: docker-compose -f keycloak-auth-middleware.yml up -d"
-echo "   2. Configure Keycloak OIDC client for Mailu"
-echo "   3. Test authentication flow"
-echo ""
+if [[ ! -f "$FORWARD_AUTH_ENV" ]]; then
+    echo "   1. Set up Keycloak OIDC client:"
+    echo "      cd ../keycloak && ./setup-client.sh"
+    echo "   2. Redeploy Mailu to enable proxy authentication:"
+    echo "      ./deploy.sh"
+    echo ""
+else
+    echo "   1. Test authentication flow:"
+    echo "      curl -I https://${HOSTNAMES%%,*}/admin"
+    echo "   2. Monitor forward auth logs:"
+    echo "      docker logs mailu-forward-auth -f"
+    echo ""
+fi
 echo "🔧 Useful commands:"
 echo "   • View logs: docker logs <container-name>"
 echo "   • Check status: docker ps --filter name=mailu-"
