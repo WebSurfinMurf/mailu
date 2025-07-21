@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # ======================================================================
-# Mailu Deployment Script - Improved Version with Bug Fixes
+# Mailu Deployment Script - Proxy Authentication Integration
 # ======================================================================
 
 set -euo pipefail
@@ -70,6 +70,17 @@ if [[ -z "${POSTMASTER:-}" ]]; then
     exit 1
 fi
 
+# Validate proxy auth settings
+if [[ -z "${PROXY_AUTH_WHITELIST:-}" ]]; then
+    echo "❌ ERROR: PROXY_AUTH_WHITELIST is required for proxy authentication"
+    exit 1
+fi
+
+if [[ -z "${PROXY_AUTH_HEADER:-}" ]]; then
+    echo "❌ ERROR: PROXY_AUTH_HEADER is required for proxy authentication"
+    exit 1
+fi
+
 echo "✔️ Environment validation passed"
 
 # --- Define Paths and Create Directories ---
@@ -112,7 +123,6 @@ fi
 echo "=== Setting up Unbound DNS resolver ==="
 
 # Create the unbound directory but let Mailu generate its own config
-# The Mailu unbound container will create the config from templates
 echo "Creating unbound directory (Mailu will generate config)..."
 
 # Download root.hints as a fallback (optional)
@@ -153,13 +163,12 @@ if ! docker network ls --format '{{.Name}}' | grep -q "^${TRAEFIK_NETWORK}$"; th
     exit 1
 fi
 
-# Check if Keycloak network exists (for LDAP integration)
-KEYCLOAK_NETWORK="traefik-proxy"  # Same as Traefik network
-if ! docker network ls --format '{{.Name}}' | grep -q "^${KEYCLOAK_NETWORK}$"; then
-    echo "⚠️  WARNING: Keycloak network '$KEYCLOAK_NETWORK' not found"
-    echo "   LDAP authentication may not work without Keycloak/LDAP access"
-else
-    echo "✔️ Keycloak network found - LDAP integration possible"
+# Check if auth service is running
+echo "=== Checking authentication service ==="
+if ! docker ps --format '{{.Names}}' | grep -q "keycloak-forward-auth"; then
+    echo "⚠️  WARNING: Keycloak forward auth service not found"
+    echo "   Please deploy the forward auth service first"
+    echo "   Run: docker-compose -f keycloak-auth-middleware.yml up -d"
 fi
 
 echo "Recreating Docker network '$MAILU_NETWORK' with subnet $SUBNET..."
@@ -307,8 +316,8 @@ docker run -d \
   -v "$MAILU_DATA_PATH/webmail:/data" \
   "$DOCKER_ORG/webmail:$MAILU_VERSION"
 
-# Front Container (Last - connects to both networks)
-echo "  Starting Front/Nginx container..."
+# Front Container (Last - connects to both networks with auth middleware)
+echo "  Starting Front/Nginx container with proxy authentication..."
 docker run -d \
   --name "$FRONT_CONTAINER" \
   --restart=always \
@@ -320,9 +329,11 @@ docker run -d \
   -v "/home/websurfinmurf/projects/traefik/certs/ai-servicers.com:/certs:ro" \
   -l "traefik.enable=true" \
   -l "traefik.docker.network=$TRAEFIK_NETWORK" \
+  \
   -l "traefik.http.routers.mailu-http.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-http.entrypoints=web" \
   -l "traefik.http.routers.mailu-http.middlewares=https-redirect@file" \
+  \
   -l "traefik.http.routers.mailu-https.rule=Host(\`${HOSTNAMES}\`)" \
   -l "traefik.http.routers.mailu-https.entrypoints=websecure" \
   -l "traefik.http.routers.mailu-https.service=mailu-service" \
@@ -331,6 +342,23 @@ docker run -d \
   -l "traefik.http.routers.mailu-https.tls.domains[0].main=ai-servicers.com" \
   -l "traefik.http.routers.mailu-https.tls.domains[0].sans=*.ai-servicers.com" \
   -l "traefik.http.services.mailu-service.loadbalancer.server.port=80" \
+  \
+  -l "traefik.http.routers.mailu-admin-auth.rule=Host(\`${HOSTNAMES}\`) && PathPrefix(\`/admin\`)" \
+  -l "traefik.http.routers.mailu-admin-auth.entrypoints=websecure" \
+  -l "traefik.http.routers.mailu-admin-auth.middlewares=keycloak-auth@docker" \
+  -l "traefik.http.routers.mailu-admin-auth.service=mailu-service" \
+  -l "traefik.http.routers.mailu-admin-auth.tls=true" \
+  -l "traefik.http.routers.mailu-admin-auth.tls.certresolver=letsencrypt" \
+  -l "traefik.http.routers.mailu-admin-auth.priority=100" \
+  \
+  -l "traefik.http.routers.mailu-webmail-auth.rule=Host(\`${HOSTNAMES}\`) && PathPrefix(\`/webmail\`)" \
+  -l "traefik.http.routers.mailu-webmail-auth.entrypoints=websecure" \
+  -l "traefik.http.routers.mailu-webmail-auth.middlewares=keycloak-auth@docker" \
+  -l "traefik.http.routers.mailu-webmail-auth.service=mailu-service" \
+  -l "traefik.http.routers.mailu-webmail-auth.tls=true" \
+  -l "traefik.http.routers.mailu-webmail-auth.tls.certresolver=letsencrypt" \
+  -l "traefik.http.routers.mailu-webmail-auth.priority=100" \
+  \
   -l "traefik.tcp.routers.smtp.rule=HostSNI(\`*\`)" \
   -l "traefik.tcp.routers.smtp.entrypoints=smtp" \
   -l "traefik.tcp.routers.smtp.service=smtp-service" \
@@ -351,53 +379,9 @@ docker run -d \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
 
-# Connect front container to both Traefik and Keycloak networks
-echo "  Connecting Front container to networks..."
+# Connect front container to Traefik network
+echo "  Connecting Front container to Traefik network..."
 docker network connect "$TRAEFIK_NETWORK" "$FRONT_CONTAINER"
-
-# Connect front container to both Traefik and Keycloak networks
-echo "  Connecting Front container to networks..."
-docker network connect "$TRAEFIK_NETWORK" "$FRONT_CONTAINER"
-
-# Connect Mailu containers to Keycloak network for LDAP access
-if docker network ls --format '{{.Name}}' | grep -q "^${KEYCLOAK_NETWORK}$"; then
-    echo "  Connecting Mailu containers to Keycloak network for LDAP access..."
-    
-    # List of containers that need LDAP access
-    ldap_containers=("$ADMIN_CONTAINER" "$IMAP_CONTAINER" "$SMTP_CONTAINER")
-    
-    for container in "${ldap_containers[@]}"; do
-        # Check if already connected to avoid error messages
-        if docker inspect "$container" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' | grep -q "$KEYCLOAK_NETWORK"; then
-            echo "    ✔️ $container already connected to $KEYCLOAK_NETWORK"
-        else
-            if docker network connect "$KEYCLOAK_NETWORK" "$container" 2>/dev/null; then
-                echo "    ✔️ Connected $container to $KEYCLOAK_NETWORK"
-            else
-                echo "    ⚠️  Could not connect $container to $KEYCLOAK_NETWORK"
-            fi
-        fi
-    done
-    
-    # Test LDAP connectivity from admin container
-    echo "  Testing LDAP connectivity..."
-    if docker exec "$ADMIN_CONTAINER" ping -c 1 keycloak-ldap >/dev/null 2>&1; then
-        echo "    ✔️ LDAP server reachable by hostname"
-    elif docker exec "$ADMIN_CONTAINER" nc -zv keycloak-ldap 389 >/dev/null 2>&1; then
-        echo "    ✔️ LDAP server reachable on port 389"
-    else
-        # Get LDAP IP as fallback
-        LDAP_IP=$(docker inspect keycloak-ldap --format '{{range $k, $v := .NetworkSettings.Networks}}{{if eq $k "traefik-proxy"}}{{$v.IPAddress}}{{end}}{{end}}' 2>/dev/null)
-        if [[ -n "$LDAP_IP" ]] && docker exec "$ADMIN_CONTAINER" ping -c 1 "$LDAP_IP" >/dev/null 2>&1; then
-            echo "    ⚠️  LDAP reachable by IP ($LDAP_IP) but not hostname"
-            echo "    Consider adding DNS alias: docker exec $ADMIN_CONTAINER sh -c 'echo \"$LDAP_IP keycloak-ldap\" >> /etc/hosts'"
-        else
-            echo "    ❌ LDAP server not reachable - authentication may fail"
-        fi
-    fi
-else
-    echo "  ⚠️  Keycloak network '$KEYCLOAK_NETWORK' not found - LDAP integration disabled"
-fi
 
 # --- Final Health Checks ---
 echo "=== Final health checks ==="
@@ -421,14 +405,25 @@ if [[ ${#failed_containers[@]} -gt 0 ]]; then
 fi
 
 echo ""
-echo "🎉 SUCCESS! Mailu deployment completed successfully!"
+echo "🎉 SUCCESS! Mailu deployment with proxy authentication completed!"
 echo ""
 echo "📍 Access points:"
-echo "   • Admin interface: https://${HOSTNAMES%%,*}/admin"
-echo "   • Webmail: https://${HOSTNAMES%%,*}/webmail"
+echo "   • Admin interface: https://${HOSTNAMES%%,*}/admin (requires Keycloak login)"
+echo "   • Webmail: https://${HOSTNAMES%%,*}/webmail (requires Keycloak login)"
+echo "   • Public webmail: https://${HOSTNAMES%%,*}/ (no auth required)"
+echo ""
+echo "🔐 Authentication:"
+echo "   • Admin/Webmail access requires Keycloak authentication"
+echo "   • Users will be redirected to: https://keycloak.ai-servicers.com"
+echo "   • After login, users are created automatically in Mailu"
 echo ""
 echo "📊 Container status:"
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' --filter "name=mailu-"
+echo ""
+echo "🔧 Next steps:"
+echo "   1. Deploy the forward auth service: docker-compose -f keycloak-auth-middleware.yml up -d"
+echo "   2. Configure Keycloak OIDC client for Mailu"
+echo "   3. Test authentication flow"
 echo ""
 echo "🔧 Useful commands:"
 echo "   • View logs: docker logs <container-name>"
