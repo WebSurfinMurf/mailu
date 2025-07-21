@@ -282,6 +282,9 @@ if [[ -f "$FORWARD_AUTH_ENV" ]]; then
       -e PROVIDERS_OIDC_ISSUER_URL="${PROVIDERS_OIDC_ISSUER_URL}" \
       -e PROVIDERS_OIDC_CLIENT_ID="${PROVIDERS_OIDC_CLIENT_ID}" \
       -e PROVIDERS_OIDC_CLIENT_SECRET="${PROVIDERS_OIDC_CLIENT_SECRET}" \
+      -e DEFAULT_PROVIDER="${DEFAULT_PROVIDER:-oidc}" \
+      -e PROVIDERS_GOOGLE_CLIENT_ID="${PROVIDERS_GOOGLE_CLIENT_ID:-}" \
+      -e PROVIDERS_GOOGLE_CLIENT_SECRET="${PROVIDERS_GOOGLE_CLIENT_SECRET:-}" \
       -e SECRET="${SECRET}" \
       -e AUTH_HOST="${AUTH_HOST}" \
       -e COOKIE_DOMAIN="${COOKIE_DOMAIN}" \
@@ -309,9 +312,11 @@ if [[ -f "$FORWARD_AUTH_ENV" ]]; then
     echo "Waiting for forward auth service..."
     timeout=30
     counter=0
-    until curl -f -s "http://localhost:4181/_oauth" >/dev/null 2>&1 || docker logs mailu-forward-auth 2>&1 | grep -q "listening"; do
+    until docker logs mailu-forward-auth 2>&1 | grep -q "Listening on" || docker logs mailu-forward-auth 2>&1 | grep -q "listening"; do
         if [[ $counter -ge $timeout ]]; then
-            echo "⚠️  WARNING: Forward auth may not be ready, continuing anyway"
+            echo "⚠️  WARNING: Forward auth may not be ready, checking logs..."
+            docker logs mailu-forward-auth --tail 5
+            echo "   Continuing with deployment anyway..."
             break
         fi
         echo "  - Waiting for forward auth... ($counter/$timeout)"
