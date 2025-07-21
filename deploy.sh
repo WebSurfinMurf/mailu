@@ -355,12 +355,48 @@ docker run -d \
 echo "  Connecting Front container to networks..."
 docker network connect "$TRAEFIK_NETWORK" "$FRONT_CONTAINER"
 
-# Connect admin container to Keycloak network for LDAP access
+# Connect front container to both Traefik and Keycloak networks
+echo "  Connecting Front container to networks..."
+docker network connect "$TRAEFIK_NETWORK" "$FRONT_CONTAINER"
+
+# Connect Mailu containers to Keycloak network for LDAP access
 if docker network ls --format '{{.Name}}' | grep -q "^${KEYCLOAK_NETWORK}$"; then
-    echo "  Connecting Admin container to Keycloak network for LDAP access..."
-    docker network connect "$KEYCLOAK_NETWORK" "$ADMIN_CONTAINER" || {
-        echo "⚠️  WARNING: Could not connect to Keycloak network - LDAP may not work"
-    }
+    echo "  Connecting Mailu containers to Keycloak network for LDAP access..."
+    
+    # List of containers that need LDAP access
+    ldap_containers=("$ADMIN_CONTAINER" "$IMAP_CONTAINER" "$SMTP_CONTAINER")
+    
+    for container in "${ldap_containers[@]}"; do
+        # Check if already connected to avoid error messages
+        if docker inspect "$container" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' | grep -q "$KEYCLOAK_NETWORK"; then
+            echo "    ✔️ $container already connected to $KEYCLOAK_NETWORK"
+        else
+            if docker network connect "$KEYCLOAK_NETWORK" "$container" 2>/dev/null; then
+                echo "    ✔️ Connected $container to $KEYCLOAK_NETWORK"
+            else
+                echo "    ⚠️  Could not connect $container to $KEYCLOAK_NETWORK"
+            fi
+        fi
+    done
+    
+    # Test LDAP connectivity from admin container
+    echo "  Testing LDAP connectivity..."
+    if docker exec "$ADMIN_CONTAINER" ping -c 1 keycloak-ldap >/dev/null 2>&1; then
+        echo "    ✔️ LDAP server reachable by hostname"
+    elif docker exec "$ADMIN_CONTAINER" nc -zv keycloak-ldap 389 >/dev/null 2>&1; then
+        echo "    ✔️ LDAP server reachable on port 389"
+    else
+        # Get LDAP IP as fallback
+        LDAP_IP=$(docker inspect keycloak-ldap --format '{{range $k, $v := .NetworkSettings.Networks}}{{if eq $k "traefik-proxy"}}{{$v.IPAddress}}{{end}}{{end}}' 2>/dev/null)
+        if [[ -n "$LDAP_IP" ]] && docker exec "$ADMIN_CONTAINER" ping -c 1 "$LDAP_IP" >/dev/null 2>&1; then
+            echo "    ⚠️  LDAP reachable by IP ($LDAP_IP) but not hostname"
+            echo "    Consider adding DNS alias: docker exec $ADMIN_CONTAINER sh -c 'echo \"$LDAP_IP keycloak-ldap\" >> /etc/hosts'"
+        else
+            echo "    ❌ LDAP server not reachable - authentication may fail"
+        fi
+    fi
+else
+    echo "  ⚠️  Keycloak network '$KEYCLOAK_NETWORK' not found - LDAP integration disabled"
 fi
 
 # --- Final Health Checks ---
