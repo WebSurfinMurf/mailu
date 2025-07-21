@@ -84,11 +84,28 @@ echo "Data path: $MAILU_DATA_PATH"
 mkdir -p "$MAILU_DATA_PATH"/{data,dkim,mail,mailqueue,overrides/postfix,overrides/dovecot,webmail}
 mkdir -p "$UNBOUND_DATA_PATH"
 
-# Set proper ownership for mail directories (Mailu uses UID 1000)
+# Check and fix mail directory ownership only if needed
 if [[ -d "$MAILU_DATA_PATH/mail" ]]; then
-    sudo chown -R 1000:1000 "$MAILU_DATA_PATH/mail" 2>/dev/null || {
-        echo "⚠️  WARNING: Could not set ownership on mail directory. Run as root if needed."
-    }
+    # Check current ownership
+    current_owner=$(stat -c '%u:%g' "$MAILU_DATA_PATH/mail" 2>/dev/null || echo "unknown")
+    
+    if [[ "$current_owner" != "1000:1000" ]]; then
+        echo "Mail directory ownership needs to be fixed (current: $current_owner, needed: 1000:1000)"
+        if sudo -n chown -R 1000:1000 "$MAILU_DATA_PATH/mail" 2>/dev/null; then
+            echo "✔️ Mail directory ownership updated"
+        else
+            echo "⚠️  Need sudo access to set mail directory ownership for Mailu containers"
+            sudo chown -R 1000:1000 "$MAILU_DATA_PATH/mail" || {
+                echo "❌ ERROR: Could not set ownership on mail directory"
+                echo "   Mailu containers may not be able to access mail data"
+                echo "   Consider running: sudo chown -R 1000:1000 $MAILU_DATA_PATH/mail"
+            }
+        fi
+    else
+        echo "✔️ Mail directory ownership is already correct (1000:1000)"
+    fi
+else
+    echo "ℹ️  Mail directory will be created with default ownership"
 fi
 
 # --- Setup Unbound Configuration ---
