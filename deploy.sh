@@ -136,6 +136,15 @@ if ! docker network ls --format '{{.Name}}' | grep -q "^${TRAEFIK_NETWORK}$"; th
     exit 1
 fi
 
+# Check if Keycloak network exists (for LDAP integration)
+KEYCLOAK_NETWORK="traefik-proxy"  # Same as Traefik network
+if ! docker network ls --format '{{.Name}}' | grep -q "^${KEYCLOAK_NETWORK}$"; then
+    echo "⚠️  WARNING: Keycloak network '$KEYCLOAK_NETWORK' not found"
+    echo "   LDAP authentication may not work without Keycloak/LDAP access"
+else
+    echo "✔️ Keycloak network found - LDAP integration possible"
+fi
+
 echo "Recreating Docker network '$MAILU_NETWORK' with subnet $SUBNET..."
 docker network rm "$MAILU_NETWORK" 2>/dev/null || true
 docker network create --subnet="$SUBNET" "$MAILU_NETWORK"
@@ -325,9 +334,17 @@ docker run -d \
   -l "traefik.tcp.routers.imaps.tls.passthrough=true" \
   "$DOCKER_ORG/nginx:$MAILU_VERSION"
 
-# Connect front container to Traefik network
-echo "  Connecting Front container to Traefik network..."
+# Connect front container to both Traefik and Keycloak networks
+echo "  Connecting Front container to networks..."
 docker network connect "$TRAEFIK_NETWORK" "$FRONT_CONTAINER"
+
+# Connect admin container to Keycloak network for LDAP access
+if docker network ls --format '{{.Name}}' | grep -q "^${KEYCLOAK_NETWORK}$"; then
+    echo "  Connecting Admin container to Keycloak network for LDAP access..."
+    docker network connect "$KEYCLOAK_NETWORK" "$ADMIN_CONTAINER" || {
+        echo "⚠️  WARNING: Could not connect to Keycloak network - LDAP may not work"
+    }
+fi
 
 # --- Final Health Checks ---
 echo "=== Final health checks ==="
