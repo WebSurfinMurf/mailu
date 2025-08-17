@@ -1,0 +1,130 @@
+NAME                 DRIVER    SCOPE
+bridge               bridge    local
+helloworld_default   bridge    local
+host                 host      local
+keycloak-net         bridge    local
+mailu_default        bridge    local
+none                 null      local
+proxy-net            bridge    local
+traefik-proxy        bridge    local
+=== Network: bridge ===
+        "Name": "bridge",
+        "Driver": "bridge",
+            "Driver": "default",
+                    "Subnet": "172.17.0.0/16",
+                    "Gateway": "172.17.0.1"
+
+=== Network: helloworld_default ===
+        "Name": "helloworld_default",
+        "Driver": "bridge",
+            "Driver": "default",
+                    "Subnet": "172.18.0.0/16",
+                    "Gateway": "172.18.0.1"
+
+=== Network: host ===
+        "Name": "host",
+        "Driver": "host",
+            "Driver": "default",
+
+=== Network: keycloak-net ===
+        "Name": "keycloak-net",
+        "Driver": "bridge",
+            "Driver": "default",
+                    "Subnet": "172.19.0.0/16",
+                    "Gateway": "172.19.0.1"
+
+=== Network: mailu_default ===
+        "Name": "mailu_default",
+        "Driver": "bridge",
+            "Driver": "default",
+                    "Subnet": "172.25.0.0/16"
+
+=== Network: none ===
+        "Name": "none",
+        "Driver": "null",
+            "Driver": "default",
+
+=== Network: proxy-net ===
+        "Name": "proxy-net",
+        "Driver": "bridge",
+            "Driver": "default",
+                    "Subnet": "172.20.0.0/16",
+                    "Gateway": "172.20.0.1"
+
+=== Network: traefik-proxy ===
+        "Name": "traefik-proxy",
+        "Driver": "bridge",
+            "Driver": "default",
+                    "Subnet": "172.22.0.0/16",
+                    "Gateway": "172.22.0.1"
+
+172.17.0.0/16
+172.18.0.0/16
+172.19.0.0/16
+172.20.0.0/16
+172.22.0.0/16
+172.25.0.0/16
+NAMES                   NETWORKS        STATUS
+keycloak                traefik-proxy   Up 3 weeks
+keycloak-postgres       traefik-proxy   Up 3 weeks
+keycloak-ldap           traefik-proxy   Up 3 weeks
+traefik-certs-dumper    traefik-proxy   Up 4 weeks
+traefik                 traefik-proxy   Up 3 weeks
+Ark_server_1            bridge          Exited (137) 5 weeks ago
+rundeck                 bridge          Up 8 weeks
+postgres                bridge          Up 2 months
+pgadmin                 bridge          Up 2 months
+helloworld              bridge          Exited (0) 2 months ago
+msfget                  bridge          Exited (1) 2 months ago
+mcp-filesystem-server   bridge          Restarting (1) 8 seconds ago
+portainer               bridge          Up 3 months
+Container: keycloak
+            "NetworkMode": "traefik-proxy",
+                    "IPAddress": "172.22.0.5",
+---
+Container: keycloak-postgres
+            "NetworkMode": "traefik-proxy",
+                    "IPAddress": "172.22.0.2",
+---
+Container: keycloak-ldap
+            "NetworkMode": "traefik-proxy",
+                    "IPAddress": "172.22.0.7",
+---
+Container: traefik-certs-dumper
+            "NetworkMode": "traefik-proxy",
+                    "IPAddress": "172.22.0.3",
+---
+Container: traefik
+            "NetworkMode": "traefik-proxy",
+                    "IPAddress": "172.22.0.4",
+---
+Container: rundeck
+            "NetworkMode": "bridge",
+            "IPAddress": "172.17.0.6",
+                    "IPAddress": "172.17.0.6",
+---
+Container: postgres
+            "NetworkMode": "bridge",
+            "IPAddress": "172.17.0.2",
+                    "IPAddress": "172.17.0.2",
+---
+Container: pgadmin
+            "NetworkMode": "bridge",
+            "IPAddress": "172.17.0.3",
+                    "IPAddress": "172.17.0.3",
+---
+Container: mcp-filesystem-server
+            "NetworkMode": "bridge",
+---
+Container: portainer
+            "NetworkMode": "bridge",
+            "IPAddress": "172.17.0.4",
+                    "IPAddress": "172.17.0.4",
+---
+4: docker0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default 
+    link/ether 02:42:bb:ef:a6:69 brd ff:ff:ff:ff:ff:ff
+    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::42:bbff:feef:a669/64 scope link 
+       valid_lft forever preferred_lft forever
+172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 
